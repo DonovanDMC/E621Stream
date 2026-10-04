@@ -29,3 +29,4 @@ export const pollIntervalScale = int("POLL_INTERVAL_SCALE", 1);
 // stream retention
 export const retentionHours = int("RETENTION_HOURS", 24);
 export const maxStreamLength = int("MAX_STREAM_LENGTH", 2_000_000);
+export const postSnapshotTTLSeconds = int("POST_SNAPSHOT_TTL_SECONDS", 7 * 24 * 60 * 60);

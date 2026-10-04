@@ -5,6 +5,7 @@ import { AuthError, hasAuth } from "../e621.ts";
 import redis from "../redis.ts";
 
 import { Feed, FEEDS } from "./feeds.ts";
+import { PostsFeed } from "./posts.ts";
 
 interface Pollable {
     source: { intervalMS: number; name: string };
@@ -43,7 +44,7 @@ async function trim(): Promise<void> {
 
 export function startIngester(): void {
     if (!hasAuth) throw new Error("E621_AUTH_USER and E621_AUTH_KEY are required for the ingester");
-    const feeds: Array<Pollable> = FEEDS.map(source => new Feed(source));
+    const feeds: Array<Pollable> = [new PostsFeed(), ...FEEDS.map(source => new Feed(source))];
     for (const feed of feeds) {
         if (disabledSources.has(feed.source.name)) {
             Debug("ingester", `${feed.source.name} is disabled`);

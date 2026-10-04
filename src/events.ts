@@ -19,6 +19,8 @@ export const EVENT_TYPES = [
     "note_version.create",
     "pool.create",
     "pool_version.create",
+    "post.create",
+    "post.update",
     "post_approval.create",
     "post_event.create",
     "post_flag.create",
