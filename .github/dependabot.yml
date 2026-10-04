@@ -1,0 +1,45 @@
+version: 2
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    assignees:
+      - "DonovanDMC"
+    commit-message:
+      include: "scope"
+      prefix: ""
+    target-branch: "master"
+    versioning-strategy: "increase"
+    labels:
+      - "dependencies"
+    # one pr per group instead of one per package
+    groups:
+      dependencies:
+        dependency-type: "production"
+      dev-dependencies:
+        dependency-type: "development"
+    ignore:
+      # typescript-eslint only supports typescript <6.1.0
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # peers of @uwu-codes/eslint-config, which pins their majors, so they move when it does
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@stylistic/eslint-plugin"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-plugin-import"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-plugin-unicorn"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-plugin-unused-imports"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "globals"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript-eslint"
+        update-types: ["version-update:semver-major"]
+      # kept on the same minor as the bun runtime (.bun-version, Dockerfile)
+      - dependency-name: "@types/bun"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
