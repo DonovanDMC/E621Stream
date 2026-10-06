@@ -29,6 +29,12 @@ export function createClient(authUser?: string, authKey?: string): E621 {
 
 export const e621 = createClient(e621AuthUser, e621AuthKey);
 
+export async function getHTML(url: string, query: Record<string, string | number>): Promise<string> {
+    const res = await e621.client.get({ url, query, parseAs: "text" });
+    if (!res.response?.ok) throw new UnexpectedResponseError(res.request, res.response, res.error);
+    return res.data as string;
+}
+
 /** spaces requests out so everything sharing a queue stays under e621's rate limit */
 export class RequestQueue {
     private lastRequest = 0;

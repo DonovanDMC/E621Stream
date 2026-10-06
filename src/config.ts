@@ -30,3 +30,5 @@ export const pollIntervalScale = int("POLL_INTERVAL_SCALE", 1);
 export const retentionHours = int("RETENTION_HOURS", 24);
 export const maxStreamLength = int("MAX_STREAM_LENGTH", 2_000_000);
 export const postSnapshotTTLSeconds = int("POST_SNAPSHOT_TTL_SECONDS", 7 * 24 * 60 * 60);
+// comments, forum posts/topics and tag requests, longer since they change less often but can be edited much later
+export const updateSnapshotTTLSeconds = int("UPDATE_SNAPSHOT_TTL_SECONDS", 30 * 24 * 60 * 60);
