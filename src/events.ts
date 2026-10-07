@@ -4,12 +4,14 @@ import redis from "./redis.ts";
 export const EVENT_TYPES = [
     "artist.create",
     "artist.delete",
+    "artist.update",
     "artist_url.create",
     "artist_version.create",
     "avoid_posting.create",
     "avoid_posting.delete",
     "avoid_posting.destroy",
     "avoid_posting.undelete",
+    "avoid_posting.update",
     "avoid_posting_version.create",
     "ban.create",
     "ban.delete",
@@ -38,9 +40,13 @@ export const EVENT_TYPES = [
     "news_update.create",
     "news_update.update",
     "note.create",
+    "note.update",
     "note_version.create",
+    "pool.add_posts",
     "pool.create",
     "pool.delete",
+    "pool.remove_posts",
+    "pool.update",
     "pool_version.create",
     "post.create",
     "post.update",
@@ -59,6 +65,7 @@ export const EVENT_TYPES = [
     "post_version.unhide",
     "tag.create",
     "tag.delete",
+    "tag.update",
     "tag_alias.create",
     "tag_alias.update",
     "tag_implication.create",
@@ -76,6 +83,7 @@ export const EVENT_TYPES = [
     "user_feedback.update",
     "wiki_page.create",
     "wiki_page.delete",
+    "wiki_page.update",
     "wiki_page_version.create",
 ] as const;
 export type EventType = typeof EVENT_TYPES[number];
@@ -110,6 +118,15 @@ export const MOD_ACTION_EVENTS: Partial<Record<string, EventType>> = {
     user_feedback_update: "user_feedback.update",
 };
 export const MOD_ACTION_EVENT_TYPES = new Set<EventType>(Object.values(MOD_ACTION_EVENTS) as Array<EventType>);
+
+export const VERSION_EVENTS: Partial<Record<EventType, EventType>> = {
+    "note.update": "note_version.create",
+    "pool.update": "pool_version.create",
+    "wiki_page.update": "wiki_page_version.create",
+    "artist.update": "artist_version.create",
+    "tag.update": "tag_type_version.create",
+    "avoid_posting.update": "avoid_posting_version.create",
+};
 
 export async function publish(type: EventType, time: string, data: unknown): Promise<string> {
     return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", type, "ts", time, "d", JSON.stringify(data)]) as Promise<string>;
