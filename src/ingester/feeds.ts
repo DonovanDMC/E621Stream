@@ -2,7 +2,7 @@ import Debug from "@yiffy/debug";
 
 import { cursorKey } from "../config.ts";
 import { e621, request } from "../e621.ts";
-import { publish, type EventType } from "../events.ts";
+import { MOD_ACTION_EVENTS, publish, type EventType } from "../events.ts";
 import redis from "../redis.ts";
 
 import { isPrivateSet, remember, TRACKED, type Tracked } from "./updates.ts";
@@ -14,6 +14,7 @@ export interface FeedSource {
     intervalMS: number;
     name: string;
     tracked?: Tracked;
+    derive?(item: Item): EventType | undefined | Promise<EventType | undefined>;
     private?(item: Item): boolean;
     search(page: Page): Promise<Array<Item> | null>;
 }
@@ -30,7 +31,7 @@ export const FEEDS: Array<FeedSource> = [
     { name: "post_replacements", event: "post_replacement.create", intervalMS: 20_000, search: page => e621.postReplacements.search(page) },
     { name: "note_versions", event: "note_version.create", intervalMS: 20_000, search: page => e621.noteVersions.search(page) },
     { name: "pool_versions", event: "pool_version.create", intervalMS: 20_000, search: page => e621.poolVersions.search(page) },
-    { name: "mod_actions", event: "mod_action.create", intervalMS: 15_000, search: page => e621.modActions.search(page) },
+    { name: "mod_actions", event: "mod_action.create", intervalMS: 15_000, search: page => e621.modActions.search(page), derive: item => MOD_ACTION_EVENTS[(item as { action?: string }).action ?? ""] },
     { name: "wiki_page_versions", event: "wiki_page_version.create", intervalMS: 30_000, search: page => e621.wikiPageVersions.search(page) },
     { name: "artist_versions", event: "artist_version.create", intervalMS: 30_000, search: page => e621.artistVersions.search(page) },
     { name: "tag_type_versions", event: "tag_type_version.create", intervalMS: 30_000, search: page => e621.tagTypeVersions.search(page) },
@@ -109,7 +110,9 @@ export class Feed {
                     continue;
                 }
                 const time = item.created_at ?? item.updated_at ?? new Date().toISOString();
+                const derived = await this.source.derive?.(item);
                 await publish(this.source.event, time, item);
+                if (derived) await publish(derived, time, item);
                 if (this.source.tracked) await remember(this.source.tracked, [item]);
                 this.seen.add(item.id);
                 published++;
