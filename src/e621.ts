@@ -1,7 +1,7 @@
 import Debug from "@yiffy/debug";
 import E621, { RatelimitError, UnexpectedResponseError } from "e621";
 
-import { e621AuthKey, e621AuthUser, e621BaseURL, e621RequestIntervalMS, e621UserAgent } from "./config.ts";
+import { e621AuthKey, e621AuthUser, e621AuthRequestIntervalMS, e621BaseURL, e621RequestIntervalMS, e621UserAgent } from "./config.ts";
 
 export class AuthError extends Error {
     constructor(what: string, status: number) {
@@ -53,7 +53,9 @@ export class RequestQueue {
     }
 }
 
+// the ingester's polling and consumer credential checks each get their own, so a backlog of one can't stall the other
 export const ingestQueue = new RequestQueue(e621RequestIntervalMS);
+export const authQueue = new RequestQueue(e621AuthRequestIntervalMS);
 
 function statusOf(err: unknown): number | null {
     return err instanceof UnexpectedResponseError ? err.response?.status ?? null : null;

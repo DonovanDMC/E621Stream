@@ -1,5 +1,5 @@
 import { maxStreamLength, streamKey } from "./config.ts";
-import redis from "./redis.ts";
+import redis, { fieldsToObject, type StreamEntry } from "./redis.ts";
 
 export const EVENT_TYPES = [
     "artist.create",
@@ -127,7 +127,30 @@ export const VERSION_EVENTS: Partial<Record<EventType, EventType>> = {
     "tag.update": "tag_type_version.create",
     "avoid_posting.update": "avoid_posting_version.create",
 };
+const eventTypeSet = new Set<string>(EVENT_TYPES);
+
+export function isEventType(type: string): type is EventType {
+    return eventTypeSet.has(type);
+}
+
+export interface StreamEvent {
+    data: Record<string, unknown>;
+    id: string;
+    raw: string;
+    time: string;
+    type: EventType;
+}
 
 export async function publish(type: EventType, time: string, data: unknown): Promise<string> {
     return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", type, "ts", time, "d", JSON.stringify(data)]) as Promise<string>;
+}
+
+export function parseEntry([id, fields]: StreamEntry): StreamEvent | null {
+    const { t, ts, d } = fieldsToObject(fields);
+    if (!t || !isEventType(t) || d === undefined) return null;
+    return { id, type: t, time: ts ?? "", data: JSON.parse(d) as Record<string, unknown>, raw: d };
+}
+
+export function dispatchFrame(event: StreamEvent): string {
+    return `{"op":"dispatch","id":${JSON.stringify(event.id)},"type":"${event.type}","time":${JSON.stringify(event.time)},"data":${event.raw}}`;
 }
