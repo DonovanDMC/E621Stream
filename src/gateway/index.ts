@@ -5,6 +5,7 @@ import { EVENT_TYPES } from "../events.ts";
 import redis from "../redis.ts";
 
 import { parseBasicAuth } from "./auth.ts";
+import { COMPRESSION_TYPES, isCompressionType, type CompressionType } from "./compression.ts";
 import { hubStats, startHub } from "./hub.ts";
 import { PROTOCOL_VERSION } from "./protocol.ts";
 import { connectionCount, Session, sessions, type SocketData } from "./session.ts";
@@ -30,8 +31,14 @@ export function startGateway(): void {
                     if (maxConnectionsPerIP > 0 && connectionCount(ip) >= maxConnectionsPerIP) {
                         return json({ error: "too many connections from this address" }, 429);
                     }
+                    const compress = url.searchParams.get("compress") ?? "";
+                    let compression: CompressionType | null = null;
+                    if (compress !== "") {
+                        if (!isCompressionType(compress)) return json({ error: `compress must be one of ${COMPRESSION_TYPES.join(", ")}` }, 400);
+                        compression = compress;
+                    }
                     const headerAuth = parseBasicAuth(req.headers.get("authorization"));
-                    if (srv.upgrade(req, { data: { ip, headerAuth } })) return;
+                    if (srv.upgrade(req, { data: { ip, compression, headerAuth } })) return;
                     return json({ error: "expected a websocket upgrade" }, 426);
                 }
 
@@ -43,6 +50,7 @@ export function startGateway(): void {
                         version: PROTOCOL_VERSION,
                         websocket: publicURL,
                         auth_required: authRequired,
+                        compression: COMPRESSION_TYPES,
                         events: EVENT_TYPES,
                     });
 

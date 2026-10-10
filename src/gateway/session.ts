@@ -16,12 +16,14 @@ import { dispatchFrame, EVENT_TYPES, parseEntry, type StreamEvent } from "../eve
 import redis, { type StreamEntry } from "../redis.ts";
 
 import { verify, type Credentials, type E621User } from "./auth.ts";
+import { StreamCompressor, type CompressionType } from "./compression.ts";
 import { compile, FilterError, matches, type CompiledSubscription } from "./filter.ts";
 import { CloseCodes, compareIds, parseCursor, PROTOCOL_VERSION, type ClientMessage, type CloseCode, type IdentifyPayload } from "./protocol.ts";
 
 import type { ServerWebSocket } from "bun";
 
 export interface SocketData {
+    compression: CompressionType | null;
     headerAuth: Credentials | null;
     ip: string;
     session?: Session;
@@ -55,6 +57,7 @@ export function connectionCount(ip: string): number {
 
 export class Session {
     private backlog: Array<StreamEvent> = [];
+    private compressor: StreamCompressor | null;
     private credentials: Credentials | null = null;
     private identifying = false;
     private identifyTimer: Timer;
@@ -67,6 +70,7 @@ export class Session {
     user: E621User | null = null;
 
     constructor(readonly ws: ServerWebSocket<SocketData>) {
+        this.compressor = ws.data.compression ? new StreamCompressor(ws.data.compression) : null;
         bump(connectionsByIP, ws.data.ip, 1);
         sessions.add(this);
         this.identifyTimer = setTimeout(() => { this.close(CloseCodes.NOT_IDENTIFIED, "identify timed out"); }, identifyTimeoutMS);
@@ -77,13 +81,14 @@ export class Session {
                 session_id: this.id,
                 identify_timeout_ms: identifyTimeoutMS,
                 auth_required: authRequired,
+                compression: ws.data.compression,
                 events: EVENT_TYPES,
             },
         });
     }
 
     private buffered(): number {
-        return this.ws.getBufferedAmount();
+        return this.ws.getBufferedAmount() + (this.compressor?.pending ?? 0);
     }
 
     private compileSubscriptions(input: unknown): Array<CompiledSubscription> | null {
@@ -214,13 +219,20 @@ export class Session {
     private send(payload: object | string): void {
         if (this.state === "closed") return;
         const data = typeof payload === "string" ? payload : JSON.stringify(payload);
-        this.ws.sendText(data, true);
+        if (this.compressor) {
+            void this.compressor.compress(data).then((buf) => {
+                if (!this.is("closed")) this.ws.sendBinary(buf);
+            });
+        } else {
+            this.ws.sendText(data, true);
+        }
         if (this.buffered() > maxBufferedBytes) this.close(CloseCodes.SLOW_CONSUMER, "too far behind, events are being sent faster than they're read");
     }
 
     cleanup(): void {
         this.state = "closed";
         clearTimeout(this.identifyTimer);
+        this.compressor?.close();
         sessions.delete(this);
         bump(connectionsByIP, this.ws.data.ip, -1);
         if (this.user) bump(connectionsByUser, this.user.id, -1);
@@ -230,7 +242,10 @@ export class Session {
         if (this.state === "closed") return;
         this.send({ op: "error", d: { code, message: reason } });
         this.state = "closed";
-        this.ws.close(code, reason);
+        const finish = (): void => { this.ws.close(code, reason); };
+        // compressed frames are sent async, give it a moment
+        if (this.compressor) setTimeout(finish, 50);
+        else finish();
     }
 
     async handleMessage(message: string | Buffer): Promise<void> {
