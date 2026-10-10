@@ -9,12 +9,15 @@ import {
     maxClientMessagesPerMinute,
     maxConnectionsPerUser,
     maxSubscriptions,
+    replayBatchSize,
+    streamKey,
 } from "../config.ts";
-import { dispatchFrame, EVENT_TYPES, type StreamEvent } from "../events.ts";
+import { dispatchFrame, EVENT_TYPES, parseEntry, type StreamEvent } from "../events.ts";
+import redis, { type StreamEntry } from "../redis.ts";
 
 import { verify, type Credentials, type E621User } from "./auth.ts";
 import { compile, FilterError, matches, type CompiledSubscription } from "./filter.ts";
-import { CloseCodes, PROTOCOL_VERSION, type ClientMessage, type CloseCode, type IdentifyPayload } from "./protocol.ts";
+import { CloseCodes, compareIds, parseCursor, PROTOCOL_VERSION, type ClientMessage, type CloseCode, type IdentifyPayload } from "./protocol.ts";
 
 import type { ServerWebSocket } from "bun";
 
@@ -24,7 +27,9 @@ export interface SocketData {
     session?: Session;
 }
 
-type State = "pending" | "live" | "closed";
+type State = "pending" | "replaying" | "live" | "closed";
+
+const MAX_BACKLOG = 50_000;
 
 export const sessions = new Set<Session>();
 const connectionsByIP = new Map<string, number>();
@@ -49,6 +54,7 @@ export function connectionCount(ip: string): number {
 }
 
 export class Session {
+    private backlog: Array<StreamEvent> = [];
     private credentials: Credentials | null = null;
     private identifying = false;
     private identifyTimer: Timer;
@@ -150,18 +156,59 @@ export class Session {
 
         const subs = this.compileSubscriptions(d.subscriptions);
         if (!subs) return;
+        let cursor: string | null = null;
+        if (d.cursor !== undefined) {
+            cursor = parseCursor(d.cursor);
+            if (!cursor) {
+                this.close(CloseCodes.INVALID_CURSOR, "invalid cursor");
+                return;
+            }
+        }
 
         this.subscriptions = subs;
         this.client = typeof d.client === "string" ? d.client.slice(0, 100) : null;
-        Debug("gateway:session", `${this.id} identified from ${this.ws.data.ip} (user: ${this.user ? `${this.user.name} #${this.user.id}` : "none"}, client: ${this.client ?? "unknown"}, ${subs.length} subscription(s))`);
+        Debug("gateway:session", `${this.id} identified from ${this.ws.data.ip} (user: ${this.user ? `${this.user.name} #${this.user.id}` : "none"}, client: ${this.client ?? "unknown"}, ${subs.length} subscription(s)${cursor ? `, replaying from ${cursor}` : ""})`);
 
-        this.state = "live";
-        this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source) } });
+        if (!cursor) {
+            this.state = "live";
+            this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: false } });
+            return;
+        }
+
+        this.state = "replaying";
+        const [oldest] = await redis.send("XRANGE", [streamKey, "-", "+", "COUNT", "1"]) as Array<StreamEntry>;
+        const expired = oldest !== undefined && compareIds(cursor, oldest[0]) < 0;
+        this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: true, cursor_expired: expired } });
+        await this.replay(cursor);
     }
 
     // typescript can't tell this changes across awaits
     private is(state: State): boolean {
         return this.state === state;
+    }
+
+    private async replay(cursor: string): Promise<void> {
+        let from = cursor;
+        let sent = 0;
+        for (;;) {
+            const entries = await redis.send("XRANGE", [streamKey, `(${from}`, "+", "COUNT", String(replayBatchSize)]) as Array<StreamEntry>;
+            if (!this.is("replaying")) return;
+            for (const entry of entries) {
+                const event = parseEntry(entry);
+                from = entry[0];
+                if (event && this.deliver(event)) sent++;
+            }
+            if (entries.length < replayBatchSize) break;
+            while (this.is("replaying") && this.buffered() > maxBufferedBytes / 2) await Bun.sleep(50);
+            if (!this.is("replaying")) return;
+        }
+        for (const event of this.backlog) {
+            if (compareIds(event.id, from) > 0 && this.deliver(event)) sent++;
+        }
+        this.backlog = [];
+        if (!this.is("replaying")) return;
+        this.state = "live";
+        this.send({ op: "replay_complete", d: { events: sent, cursor: this.lastSent ?? from } });
     }
 
     private send(payload: object | string): void {
@@ -235,7 +282,12 @@ export class Session {
     }
 
     offer(event: StreamEvent): void {
-        if (this.state === "live") this.deliver(event);
+        if (this.state === "live") {
+            this.deliver(event);
+        } else if (this.state === "replaying") {
+            this.backlog.push(event);
+            if (this.backlog.length > MAX_BACKLOG) this.close(CloseCodes.SLOW_CONSUMER, "replay too slow");
+        }
     }
 
     async recheckAuth(): Promise<void> {

@@ -1,7 +1,24 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 import { parseBasicAuth } from "../src/gateway/auth.ts";
+import { compareIds, parseCursor } from "../src/gateway/protocol.ts";
 import { diff } from "../src/ingester/posts.ts";
+
+describe("cursors", () => {
+    test("accepts stream ids and millisecond timestamps", () => {
+        expect(parseCursor("1700000000000-3")).toBe("1700000000000-3");
+        expect(parseCursor("1700000000000")).toBe("1700000000000-0");
+        expect(parseCursor(1_700_000_000_000)).toBe("1700000000000-0");
+        expect(parseCursor("nope")).toBeNull();
+        expect(parseCursor(-1)).toBeNull();
+    });
+
+    test("orders by time then sequence", () => {
+        expect(compareIds("2-0", "1-5")).toBeGreaterThan(0);
+        expect(compareIds("1-1", "1-2")).toBeLessThan(0);
+        expect(compareIds("1-1", "1-1")).toBe(0);
+    });
+});
 
 test("basic auth header", () => {
     expect(parseBasicAuth(`Basic ${btoa("someone:abc:def")}`)).toEqual({ username: "someone", apiKey: "abc:def" });

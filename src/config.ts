@@ -52,3 +52,4 @@ export const authCacheSeconds = int("AUTH_CACHE_SECONDS", 30 * 60);
 export const maxSubscriptions = int("MAX_SUBSCRIPTIONS", 50);
 export const maxClientMessagesPerMinute = int("MAX_CLIENT_MESSAGES_PER_MINUTE", 60);
 export const maxBufferedBytes = int("MAX_BUFFERED_BYTES", 16 * 1024 * 1024);
+export const replayBatchSize = int("REPLAY_BATCH_SIZE", 500);
