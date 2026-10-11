@@ -33,6 +33,9 @@ export const e621AuthRequestIntervalMS = int("E621_AUTH_REQUEST_INTERVAL_MS", 10
 export const disabledSources = new Set(list("DISABLED_SOURCES"));
 export const pollIntervalScale = int("POLL_INTERVAL_SCALE", 1);
 
+export const logDir = Bun.env.LOG_DIR ?? "logs";
+export const logRetentionDays = int("LOG_RETENTION_DAYS", 14);
+
 // stream retention
 export const retentionHours = int("RETENTION_HOURS", 24);
 export const maxStreamLength = int("MAX_STREAM_LENGTH", 2_000_000);
