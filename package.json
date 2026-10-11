@@ -22,6 +22,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "bun test",
+    "client": "bun run scripts/client.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
