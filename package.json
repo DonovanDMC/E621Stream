@@ -19,6 +19,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "build": "bun run scripts/build.ts",
+    "build:pages": "bun run scripts/pages.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "bun test",
@@ -40,6 +41,7 @@
     "eslint-plugin-unused-imports": "^4.4.1",
     "globals": "^16.5.0",
     "jiti": "^2.6.1",
+    "marked": "^18.1.2",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1"
   }

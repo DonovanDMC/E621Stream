@@ -5,4 +5,5 @@
 /.env.*
 !/.env.example
 /dist
+/dist-pages
 /logs
