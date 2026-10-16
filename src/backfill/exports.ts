@@ -1,7 +1,7 @@
 import Debug from "@yiffy/debug";
 import E621ExportDownloader from "e621-export-downloader";
 
-import { databaseURL } from "../config.ts";
+import { databaseURL, e621UserAgent } from "../config.ts";
 import sql from "../db.ts";
 
 import { setState } from "./state.ts";
@@ -20,7 +20,19 @@ interface Field { columns: Array<string>; field: string; sql: string }
 
 interface Staged { columns: Set<string>; table: string }
 
-/** copies an export into bf_<name>, every column as text so null and "" survive exactly as e621 has them */
+// e621-export-downloader's download buffers everything in memory when it can't write it out fast enough, which
+// got the ingester oom killed on the posts export
+async function streamImport(url: string, table: string): Promise<void> {
+    const proc = Bun.spawn(["sh", "-c", "set -o pipefail; curl -sSfL -A \"$AGENT\" \"$URL\" | gunzip | psql \"$DATABASE\" --no-psqlrc -q -v ON_ERROR_STOP=1 -c \"\\copy $TABLE FROM STDIN WITH (FORMAT csv, HEADER true)\""], {
+        env: { ...process.env, AGENT: e621UserAgent, URL: url, DATABASE: databaseURL, TABLE: table },
+        stdout: "ignore",
+        stderr: "pipe",
+    });
+    const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+    if (code !== 0) throw new Error(`importing ${url} failed (${code}): ${stderr.trim()}`);
+}
+
+// everything as text so null and "" stay as they are
 async function stage(source: string, name: ExportName, required: Array<string>): Promise<Staged> {
     const table = `bf_${name}`;
     const exp = await downloader.get(name);
@@ -30,11 +42,9 @@ async function stage(source: string, name: ExportName, required: Array<string>):
     const missing = required.filter(column => !columns.includes(column));
     if (missing.length !== 0) throw new Error(`the ${name} export no longer has ${missing.join(", ")}`);
     await sql.unsafe(`DROP TABLE IF EXISTS ${table}`);
-    // bf_children/bf_post_pools are left behind if a posts import was interrupted
     if (name === "posts") await sql.unsafe("DROP TABLE IF EXISTS bf_children, bf_post_pools");
     await sql.unsafe(`CREATE UNLOGGED TABLE ${table} (${columns.map(column => `${ident(column)} text`).join(", ")})`);
-    await exp.import("postgres", { connectionString: databaseURL, tableName: table });
-    await exp.delete();
+    await streamImport(exp.data.url, table);
     const [{ count }] = await sql.unsafe<[{ count: number }]>(`SELECT count(*)::int AS count FROM ${table}`);
     Debug("backfill", `staged ${count} ${name}`);
     return { table, columns: new Set(columns) };
