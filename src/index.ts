@@ -9,5 +9,5 @@ if (!["all", "ingester", "gateway"].includes(role)) throw new Error(`ROLE must b
 
 startLogging(role);
 Debug("e621stream", `starting as ${role}`);
-if (role === "all" || role === "ingester") startIngester();
+if (role === "all" || role === "ingester") await startIngester();
 if (role === "all" || role === "gateway") startGateway();

@@ -7,6 +7,8 @@ x-app: &app
   depends_on:
     redis:
       condition: service_healthy
+    postgres:
+      condition: service_healthy
 
 services:
   redis:
@@ -25,12 +27,34 @@ services:
     labels:
       - "hostname=redis.e621stream.containers.local"
 
+  # snapshots of every record, which update events are diffed against, kept forever
+  postgres:
+    image: postgres:18.1-alpine3.23
+    restart: always
+    environment:
+      - POSTGRES_USER=e621stream
+      - POSTGRES_DB=e621stream
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - PGDATA=/var/lib/postgresql/data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    shm_size: 256mb
+    healthcheck:
+      test: pg_isready -U e621stream -d e621stream
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    hostname: postgres.e621stream.containers.local
+    labels:
+      - "hostname=postgres.e621stream.containers.local"
+
   # polls e621, there must only ever be one of these
   ingester:
     <<: *app
     environment:
       - REDIS_URL=redis://redis.e621stream.containers.local:6379
-      - LOGGER=e621stream,ingester,ingester:*,e621
+      - DATABASE_URL=postgres://e621stream@postgres.e621stream.containers.local:5432/e621stream
+      - LOGGER=e621stream,ingester,ingester:*,e621,backfill,backfill:*
       - ROLE=ingester
     deploy:
       resources:
@@ -47,6 +71,7 @@ services:
     <<: *app
     environment:
       - REDIS_URL=redis://redis.e621stream.containers.local:6379
+      - DATABASE_URL=postgres://e621stream@postgres.e621stream.containers.local:5432/e621stream
       - LOGGER=e621stream,gateway,gateway:*
       - ROLE=gateway
       - PORT=3000
@@ -75,3 +100,4 @@ networks:
 
 volumes:
   redis_data:
+  postgres_data:

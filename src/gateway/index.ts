@@ -7,8 +7,10 @@ import redis from "../redis.ts";
 import { parseBasicAuth } from "./auth.ts";
 import { COMPRESSION_TYPES, isCompressionType, type CompressionType } from "./compression.ts";
 import { hubStats, startHub } from "./hub.ts";
+import { connectionsChanged, startPresence } from "./presence.ts";
 import { PROTOCOL_VERSION } from "./protocol.ts";
 import { connectionCount, Session, sessions, type SocketData } from "./session.ts";
+import { status, statusPage } from "./status.ts";
 
 function clientIP(req: Request, server: Bun.Server<SocketData>): string {
     if (trustProxy) {
@@ -59,6 +61,14 @@ export function startGateway(): void {
                         .then(() => json({ ok: true, last_event_id: hubStats.lastId, last_event_at: hubStats.lastEventAt }))
                         .catch(() => json({ ok: false }, 503));
 
+                case "/status":
+                    return statusPage()
+                        .then(html => new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } }))
+                        .catch((err: unknown) => new Response(`status unavailable: ${String(err)}`, { status: 503 }));
+
+                case "/status.json":
+                    return status().then(data => json(data)).catch((err: unknown) => json({ error: String(err) }, 503));
+
                 case "/stats":
                     return json({ connections: sessions.size, events_received: hubStats.received, last_event_id: hubStats.lastId, last_event_at: hubStats.lastEventAt });
 
@@ -74,6 +84,7 @@ export function startGateway(): void {
             sendPings: true,
             open(ws) {
                 ws.data.session = new Session(ws);
+                connectionsChanged();
             },
             message(ws, message) {
                 ws.data.session?.handleMessage(message).catch((err: unknown) => {
@@ -88,6 +99,7 @@ export function startGateway(): void {
     });
 
     void startHub();
+    startPresence();
     setInterval(() => {
         for (const session of sessions) void session.recheckAuth().catch(() => null);
     }, 60_000);

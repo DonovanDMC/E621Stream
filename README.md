@@ -41,15 +41,35 @@ cp .env.example .env   # fill in E621_AUTH_USER / E621_AUTH_KEY
 docker compose up -d --build
 ```
 
-The stack runs three containers:
+The stack runs four containers:
 
-- `redis` holds the event stream (a Redis stream, trimmed to `RETENTION_HOURS`), feed cursors, post snapshots used for diffs, and cached credential checks.
+- `redis` holds the event stream (a Redis stream, trimmed to `RETENTION_HOURS`), feed cursors, status page counters, and cached credential checks.
+- `postgres` holds a snapshot of every record the stream tracks, which update events are diffed against. Snapshots are kept forever and replaced as records change.
 - `ingester` polls e621 through the [`e621`](https://www.npmjs.com/package/e621) module, always authenticated with the configured account. Run exactly one.
 - `gateway` serves the WebSocket on `127.0.0.1:3621`. Put it behind a reverse proxy for TLS, and keep `TRUST_PROXY=true` so client IPs come from `CF-Connecting-IP`/`X-Forwarded-For`. It can be scaled, but connection limits are counted per gateway process.
 
 Everything the ingester's account can see is rebroadcast publicly, so use an account without staff permissions. Known-sensitive fields such as `ip_addr` are stripped either way.
 
-Requests to e621 are spaced `E621_REQUEST_INTERVAL_MS` apart (default 550ms, just under e621's 2 req/s limit). The gateway's credential checks have their own queue, spaced `E621_AUTH_REQUEST_INTERVAL_MS` apart (default 1000ms) since they share the ingester's IP. If e621 still returns a 429, the module waits out its `Retry-After` and tries again.
+Requests to e621 start `E621_REQUEST_INTERVAL_MS` apart (default 550ms, just under e621's 2 req/s limit), with at most two in flight so a slow connection can't bunch them up. The gateway's credential checks have their own queue, spaced `E621_AUTH_REQUEST_INTERVAL_MS` apart (default 1000ms) since they share the ingester's IP. A 429 is retried after its `Retry-After`, back in the queue like any other request.
+
+### Backfill
+
+Update events need the previous state of a record to say what changed. The ingester fills in snapshots for everything from before it started, in the background, until it's caught up (`BACKFILL=false` turns this off):
+
+- Posts, tag aliases, tag implications and BURs come from e621's [daily DB exports](https://e621.net/db_exports), imported with `psql` through [e621-export-downloader](https://www.npmjs.com/package/e621-export-downloader). These don't use the API. The posts export is about 2GB compressed and several times that once unpacked, in the container's temp directory, while it's imported.
+- Comments, forum posts and topics, post sets, flags, takedowns and news updates are crawled through the API, newest first. Crawls only get the request slots the ingester's polling leaves spare, so live events are never slowed down. Each crawl starts from wherever its live feed was when the crawl began, since the feed stores everything after that itself.
+
+Snapshots are versioned (`change_seq` for posts, `updated_at` otherwise), so an older copy never replaces a newer one, and the backfill is safe to restart or rerun. A field an export doesn't have is left out of the snapshot, and the record's next update fills it in instead of reporting it as a change.
+
+```bash
+docker compose exec ingester bun run backfill status        # progress of each source
+docker compose exec ingester bun run backfill verify        # compare stored snapshots with e621 now
+docker compose exec ingester bun run backfill reset posts   # start a source over (or all)
+```
+
+### Status
+
+`/status` shows request rates, average request time, failures and rate limits, event counts by type, each feed's last poll, and the backfill's progress. It refreshes every 15 seconds. `/status.json` has the same data.
 
 ### Logs
 
@@ -78,4 +98,4 @@ bun run client --url wss://e621.stream/ws        # or set STREAM_URL
 
 The documentation site is built from `pages/`: each `pages/<name>.md` becomes `/<name>/`, `pages/index.md` is the home page, and `pages/template.html` is the layout. `bun run build:pages` builds it into `dist-pages/`. The `Deploy Pages` workflow deploys it to `https://e621.stream` through [PagesDeployServer](https://github.com/DonovanDMC/PagesDeployServer) whenever `pages/` changes on `master`, or when run by hand.
 
-The site and the gateway share the domain, so the reverse proxy sends `/ws`, `/health`, `/stats` and `/info` to the gateway and everything else to the pages. The gateway's service info is at `/info` (and `/` when reached directly).
+The site and the gateway share the domain, so the reverse proxy sends `/ws`, `/health`, `/stats`, `/info`, `/status` and `/status.json` to the gateway and everything else to the pages. The gateway's service info is at `/info` (and `/` when reached directly).

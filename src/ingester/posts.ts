@@ -1,6 +1,7 @@
 import Debug from "@yiffy/debug";
 
-import { cursorKey, postSnapshotTTLSeconds, redisPrefix } from "../config.ts";
+import { cursorKey } from "../config.ts";
+import { getSnapshots, putSnapshots } from "../db.ts";
 import { e621, request } from "../e621.ts";
 import { publish } from "../events.ts";
 import redis from "../redis.ts";
@@ -26,7 +27,7 @@ export interface Post {
 }
 
 // only what's needed to tell what changed, the full post is ~3x larger
-interface Snapshot {
+export interface Snapshot {
     approver_id: number | null;
     change_seq: number;
     children: Array<number>;
@@ -49,13 +50,12 @@ const MAX_PAGES_PER_POLL = 20;
 const NEW_POST_WINDOW_MS = 15 * 60 * 1000;
 const SEQ_FIELD = "posts:change_seq";
 const MAX_ID_FIELD = "posts:max_id";
-const snapshotKey = (id: number): string => `${redisPrefix}:post:${id}`;
 
 async function search(tags: string, limit: number, page: number): Promise<Array<Post>> {
     return request("posts", () => e621.posts.search({ tags, limit, page })) as Promise<Array<unknown>> as Promise<Array<Post>>;
 }
 
-function snapshot(post: Post): Snapshot {
+export function snapshot(post: Post): Snapshot {
     return {
         approver_id: post.approver_id,
         change_seq: post.change_seq,
@@ -79,32 +79,30 @@ function setDiff<T>(before: Array<T>, after: Array<T>): { added: Array<T>; remov
     return added.length === 0 && removed.length === 0 ? null : { added, removed };
 }
 
-export function diff(before: Snapshot, after: Snapshot): Changes {
+export function diff(before: Partial<Snapshot>, after: Snapshot): Changes {
     const changes: Changes = {};
-    const scalar = (key: string, a: unknown, b: unknown): void => {
-        if (a !== b) changes[key] = { old: a, new: b };
+    const scalar = (key: keyof Snapshot): void => {
+        if (key in before && before[key] !== after[key]) changes[key] = { old: before[key], new: after[key] };
     };
     const set = <T>(key: string, a: Array<T>, b: Array<T>): void => {
         const d = setDiff(a, b);
         if (d) changes[key] = d;
     };
 
-    // tags are reported per category so a category change (e.g. general -> artist) shows up as a move
-    for (const category of new Set([...Object.keys(before.tags), ...Object.keys(after.tags)])) {
-        set(`tags.${category}`, before.tags[category] ?? [], after.tags[category] ?? []);
+    // per category so moving a tag between categories (e.g. general -> artist) shows up
+    if (before.tags) {
+        for (const category of new Set([...Object.keys(before.tags), ...Object.keys(after.tags)])) {
+            set(`tags.${category}`, before.tags[category] ?? [], after.tags[category] ?? []);
+        }
     }
-    set("locked_tags", before.locked_tags, after.locked_tags);
-    set("sources", before.sources, after.sources);
-    set("pools", before.pools, after.pools);
-    set("children", before.children, after.children);
-    scalar("rating", before.rating, after.rating);
-    scalar("description", before.description, after.description);
-    scalar("md5", before.md5, after.md5);
-    scalar("parent_id", before.parent_id, after.parent_id);
-    scalar("approver_id", before.approver_id, after.approver_id);
-    scalar("has_notes", before.has_notes, after.has_notes);
-    for (const flag of new Set([...Object.keys(before.flags), ...Object.keys(after.flags)])) {
-        scalar(`flags.${flag}`, before.flags[flag], after.flags[flag]);
+    for (const key of ["locked_tags", "sources", "pools", "children"] as const) {
+        if (before[key]) set(key, before[key] as Array<unknown>, after[key] as Array<unknown>);
+    }
+    for (const key of ["rating", "description", "md5", "parent_id", "approver_id", "has_notes"] as const) scalar(key);
+    if (before.flags) {
+        for (const flag of new Set([...Object.keys(before.flags), ...Object.keys(after.flags)])) {
+            if (before.flags[flag] !== after.flags[flag]) changes[`flags.${flag}`] = { old: before.flags[flag], new: after.flags[flag] };
+        }
     }
     return changes;
 }
@@ -152,22 +150,22 @@ export class PostsFeed {
         if (found.size === 0) return 0;
 
         const posts = [...found.values()].sort((a, b) => a.change_seq - b.change_seq);
-        const previous = await redis.mget(...posts.map(p => snapshotKey(p.id)));
-        for (const [i, post] of posts.entries()) {
+        const previous = await getSnapshots("post", posts.map(p => p.id)) as Map<number, unknown> as Map<number, Snapshot>;
+        for (const post of posts) {
             const snap = snapshot(post);
-            const before = previous[i] ? JSON.parse(previous[i]) as Snapshot : null;
+            const before = previous.get(post.id) ?? null;
             // uploads can commit out of id order
             const isNew = !before && (post.id > this.maxId || Date.now() - Date.parse(post.created_at) < NEW_POST_WINDOW_MS);
             if (isNew) {
                 if (post.id > this.maxId) this.maxId = post.id;
                 await publish("post.create", post.created_at, { post });
             } else {
-                // null means we haven't seen this post before (or its snapshot expired), so we can't say what changed
+                // null means we haven't seen this post before, so we can't say what changed
                 const changes = before ? diff(before, snap) : null;
                 await publish("post.update", post.updated_at, { post, changes });
             }
-            await redis.set(snapshotKey(post.id), JSON.stringify(snap), "EX", postSnapshotTTLSeconds);
         }
+        await putSnapshots("post", posts.map(post => ({ id: post.id, version: post.change_seq, data: snapshot(post) })));
 
         this.seq = posts.at(-1)!.change_seq;
         await redis.hset(cursorKey, { [SEQ_FIELD]: String(this.seq), [MAX_ID_FIELD]: String(this.maxId) });

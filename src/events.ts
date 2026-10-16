@@ -1,4 +1,5 @@
 import { maxStreamLength, streamKey } from "./config.ts";
+import { count } from "./metrics.ts";
 import redis, { fieldsToObject, type StreamEntry } from "./redis.ts";
 
 export const EVENT_TYPES = [
@@ -142,6 +143,8 @@ export interface StreamEvent {
 }
 
 export async function publish(type: EventType, time: string, data: unknown): Promise<string> {
+    count("events");
+    count(`events.${type}`);
     return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", type, "ts", time, "d", JSON.stringify(data)]) as Promise<string>;
 }
 

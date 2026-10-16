@@ -1,11 +1,12 @@
 import Debug from "@yiffy/debug";
 
-import { cursorKey, redisPrefix, updateSnapshotTTLSeconds } from "../config.ts";
+import { cursorKey } from "../config.ts";
+import { getSnapshots, putSnapshots, versionOf, type Snapshot } from "../db.ts";
 import { e621, getHTML, request } from "../e621.ts";
 import { publish, type EventType } from "../events.ts";
 import redis from "../redis.ts";
 
-interface Item { created_at?: string | null; id: number; updated_at?: string | null }
+export interface Item { created_at?: string | null; id: number; updated_at?: string | null }
 interface SearchOptions { ids?: Array<number>; limit: number; page: number }
 interface IdsOptions { limit: number; page: number; since: Date | null }
 type Changes = Record<string, { new: unknown; old: unknown }>;
@@ -80,9 +81,7 @@ export const UPDATES: Array<UpdateSource> = [
     { ...TRACKED.helpPage, name: "help_pages", event: "help_page.update", createEvent: "help_page.create", mode: "window", pages: 1, intervalMS: 120_000, unknownChanges: false, search: () => e621.helpPages.list() },
 ];
 
-const snapshotKey = (tracked: Tracked, id: number): string => `${redisPrefix}:${tracked.resource}:${id}`;
-
-function pick(tracked: Tracked, item: Item): Record<string, unknown> {
+export function pick(tracked: Tracked, item: Item): Record<string, unknown> {
     const record = item as unknown as Record<string, unknown>;
     const fields = tracked.members ? [...tracked.fields, tracked.members.field] : tracked.fields;
     return Object.fromEntries(fields.map(field => [field, record[field] ?? null]));
@@ -93,18 +92,17 @@ export function membership(before: unknown, after: unknown): { added: Array<numb
     return { added: [...b].filter(id => !a.has(id)), removed: [...a].filter(id => !b.has(id)) };
 }
 
-function diff(before: Record<string, unknown>, after: Record<string, unknown>, skip?: string): Changes {
+export function diff(before: Record<string, unknown>, after: Record<string, unknown>, skip?: string): Changes {
     const changes: Changes = {};
     for (const [field, value] of Object.entries(after)) {
-        if (field === skip) continue;
-        if (JSON.stringify(before[field] ?? null) !== JSON.stringify(value)) changes[field] = { old: before[field] ?? null, new: value };
+        if (field === skip || !(field in before)) continue;
+        if (JSON.stringify(before[field]) !== JSON.stringify(value)) changes[field] = { old: before[field], new: value };
     }
     return changes;
 }
 
-/** stores the current state of new records, so their first edit can be diffed */
 export async function remember(tracked: Tracked, items: Array<Item>): Promise<void> {
-    for (const item of items) await redis.set(snapshotKey(tracked, item.id), JSON.stringify(pick(tracked, item)), "EX", updateSnapshotTTLSeconds);
+    await putSnapshots(tracked.resource, items.map(item => ({ id: item.id, version: versionOf(item), data: pick(tracked, item) })));
 }
 
 export class UpdateFeed {
@@ -129,18 +127,17 @@ export class UpdateFeed {
     private async handle(all: Array<Item>, emitUnknown: boolean): Promise<number> {
         const items = this.source.private ? all.filter(item => !this.source.private!(item)) : all;
         if (items.length === 0) return 0;
-        const previous = await redis.mget(...items.map(item => snapshotKey(this.source, item.id)));
-        let published = 0;
         const { members, resource } = this.source;
-        for (const [i, item] of items.entries()) {
+        const previous = await getSnapshots(resource, items.map(item => item.id));
+        const writes: Array<Snapshot> = [];
+        let published = 0;
+        for (const item of items) {
             const after = pick(this.source, item);
-            const stored = previous[i];
-            const before = stored ? JSON.parse(stored) as Record<string, unknown> : null;
+            const before = previous.get(item.id) ?? null;
             const changes = before ? diff(before, after, members?.field) : null;
             const moved = before && members && members.field in before ? membership(before[members.field], after[members.field]) : null;
             const movedAny = moved !== null && (moved.added.length !== 0 || moved.removed.length !== 0);
-            // window mode sees the same records every poll, only write when something's new
-            if (!changes || Object.keys(changes).length !== 0 || movedAny) await redis.set(snapshotKey(this.source, item.id), JSON.stringify(after), "EX", updateSnapshotTTLSeconds);
+            if (!changes || Object.keys(changes).length !== 0 || movedAny) writes.push({ id: item.id, version: versionOf(item), data: after });
             const time = item.updated_at ?? new Date().toISOString();
             if (members && moved) {
                 if (moved.added.length !== 0) await publish(members.added, time, { [resource]: item, post_ids: moved.added });
@@ -158,6 +155,7 @@ export class UpdateFeed {
                 published++;
             }
         }
+        await putSnapshots(resource, writes);
         return published;
     }
 

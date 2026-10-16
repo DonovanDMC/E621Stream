@@ -20,6 +20,10 @@ export const redisURL = Bun.env.REDIS_URL ?? "redis://redis:6379";
 export const redisPrefix = Bun.env.REDIS_PREFIX ?? "e621stream";
 export const streamKey = `${redisPrefix}:events`;
 export const cursorKey = `${redisPrefix}:cursors`;
+export const feedsKey = `${redisPrefix}:feeds`;
+export const clientsKey = `${redisPrefix}:clients`;
+export const idleKey = `${redisPrefix}:ingester:idle`;
+export const databaseURL = Bun.env.DATABASE_URL ?? "postgres://e621stream:e621stream@postgres:5432/e621stream";
 
 // e621
 export const e621BaseURL = Bun.env.E621_BASE_URL ?? "https://e621.net";
@@ -30,8 +34,10 @@ export const e621AuthKey = Bun.env.E621_AUTH_KEY?.trim();
 // e621's limit is 2/s
 export const e621RequestIntervalMS = int("E621_REQUEST_INTERVAL_MS", 550);
 export const e621AuthRequestIntervalMS = int("E621_AUTH_REQUEST_INTERVAL_MS", 1000);
+export const backfillEnabled = bool("BACKFILL", true);
 export const disabledSources = new Set(list("DISABLED_SOURCES"));
 export const pollIntervalScale = int("POLL_INTERVAL_SCALE", 1);
+export const idlePollScale = int("IDLE_POLL_SCALE", 10);
 
 export const logDir = Bun.env.LOG_DIR ?? "logs";
 export const logRetentionDays = int("LOG_RETENTION_DAYS", 14);
@@ -39,9 +45,6 @@ export const logRetentionDays = int("LOG_RETENTION_DAYS", 14);
 // stream retention
 export const retentionHours = int("RETENTION_HOURS", 24);
 export const maxStreamLength = int("MAX_STREAM_LENGTH", 2_000_000);
-export const postSnapshotTTLSeconds = int("POST_SNAPSHOT_TTL_SECONDS", 7 * 24 * 60 * 60);
-// comments, forum posts/topics and tag requests, longer since they change less often but can be edited much later
-export const updateSnapshotTTLSeconds = int("UPDATE_SNAPSHOT_TTL_SECONDS", 30 * 24 * 60 * 60);
 
 // gateway
 export const port = int("PORT", 3000);

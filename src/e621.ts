@@ -19,11 +19,7 @@ export function createClient(authUser?: string, authKey?: string): E621 {
         baseURL: e621BaseURL,
         userAgent: e621UserAgent,
         requestTimeout: 30,
-        // 429s are retried by the module itself, honoring Retry-After
-        ratelimit: {
-            maxRetries: 5,
-            onRatelimit: ({ attempt, retryAfter, willRetry }): void => { Debug("e621", `rate limited (attempt ${attempt}, retry after ${retryAfter ?? "?"}s)${willRetry ? "" : ", giving up"}`); },
-        },
+        ratelimit: { retry: false },
     });
 }
 
@@ -35,27 +31,67 @@ export async function getHTML(url: string, query: Record<string, string | number
     return res.data as string;
 }
 
-/** spaces requests out so everything sharing a queue stays under e621's rate limit */
-export class RequestQueue {
-    private lastRequest = 0;
-    private tail: Promise<unknown> = Promise.resolve();
+const MAX_IN_FLIGHT = 2;
+
+export interface Scheduler { schedule<T>(fn: () => Promise<T>): Promise<T> }
+
+/**
+ * spaces request starts out so everything sharing a queue stays under e621's rate limit. requests don't wait for the
+ * previous one to finish, a response takes longer than the interval so that would make it the limit instead
+ */
+export class RequestQueue implements Scheduler {
+    private inFlight = 0;
+    private lastStart = 0;
+    private timer: ReturnType<typeof setTimeout> | null = null;
+    private waiting: Array<{ background: boolean; start(): void }> = [];
+    /** the same queue, for work that should only get the slots nothing else wants */
+    readonly background: Scheduler = { schedule: fn => this.enqueue(fn, true) };
     constructor(private readonly intervalMS: number) {}
 
-    schedule<T>(fn: () => Promise<T>): Promise<T> {
-        const run = this.tail.then(async () => {
-            const wait = this.lastRequest + this.intervalMS - Date.now();
-            if (wait > 0) await Bun.sleep(wait);
-            this.lastRequest = Date.now();
-            return fn();
+    private enqueue<T>(fn: () => Promise<T>, background: boolean): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            this.waiting.push({
+                background,
+                start: () => {
+                    this.inFlight++;
+                    fn().then(resolve, reject).finally(() => {
+                        this.inFlight--;
+                        this.pump();
+                    });
+                },
+            });
+            this.pump();
         });
-        this.tail = run.catch(() => null);
-        return run;
+    }
+
+    private pump(): void {
+        // when the connection is slow, requests sent apart can still arrive together, this caps how many can
+        if (this.timer || this.waiting.length === 0 || this.inFlight >= MAX_IN_FLIGHT) return;
+        const wait = this.lastStart + this.intervalMS - Date.now();
+        if (wait > 0) {
+            this.timer = setTimeout(() => {
+                this.timer = null;
+                this.pump();
+            }, wait);
+            return;
+        }
+        const foreground = this.waiting.findIndex(item => !item.background);
+        const [next] = this.waiting.splice(foreground === -1 ? 0 : foreground, 1);
+        this.lastStart = Date.now();
+        next!.start();
+        this.pump();
+    }
+
+    schedule<T>(fn: () => Promise<T>): Promise<T> {
+        return this.enqueue(fn, false);
     }
 }
 
-// the ingester's polling and consumer credential checks each get their own, so a backlog of one can't stall the other
+// the ingester's polling and consumer credential checks each get their own, so a backlog of one can't stall the other.
+// the backfill shares the ingester's, in the gaps between polls
 export const ingestQueue = new RequestQueue(e621RequestIntervalMS);
 export const authQueue = new RequestQueue(e621AuthRequestIntervalMS);
+export const backfillQueue = ingestQueue.background;
 
 function statusOf(err: unknown): number | null {
     return err instanceof UnexpectedResponseError ? err.response?.status ?? null : null;
@@ -67,18 +103,22 @@ async function backoff(attempt: number, reason: string): Promise<void> {
     await Bun.sleep(ms);
 }
 
-/** rate limits and retries a call made with the e621 module */
-export async function request<T>(what: string, fn: () => Promise<T>, queue = ingestQueue, retries = 5): Promise<T> {
+export async function request<T>(what: string, fn: () => Promise<T>, queue: Scheduler = ingestQueue, retries = 5): Promise<T> {
     for (let attempt = 1; ; attempt++) {
         try {
             return scrub(await queue.schedule(fn));
         } catch (err) {
             const status = statusOf(err);
             if (status === 401 || status === 403) throw new AuthError(what, status);
-            // the module already exhausted its own 429 retries, and anything other than server errors and network
-            // failures won't fix itself
-            const retryable = !(err instanceof RatelimitError) && (status === null || status >= 500);
-            if (!retryable || attempt >= retries) throw err;
+            if (attempt >= retries) throw err;
+            if (status === 429) {
+                const retryAfter = err instanceof RatelimitError ? err.retryAfter : null;
+                const ms = (retryAfter ?? 2 ** attempt) * 1000;
+                Debug("e621", `${what}: rate limited, retrying in ${ms}ms`);
+                await Bun.sleep(ms);
+                continue;
+            }
+            if (status !== null && status < 500) throw err;
             await backoff(attempt, `${what}: ${status ?? String(err)}`);
         }
     }

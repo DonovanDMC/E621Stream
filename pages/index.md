@@ -72,6 +72,9 @@ Send them in `identify` as `auth: { username, api_key }`, or as an `Authorizatio
 
 ## HTTP
 
-- `GET /info`: service info (WebSocket URL, event types, compression options)
-- `GET /health`: health check
-- `GET /stats`: connection count and the latest event
+| route | |
+|---|---|
+| `/info` | websocket url, event types, compression options |
+| `/health` | |
+| `/stats` | connection count & the latest event |
+| `/status` | requests, events, feeds & backfill (`/status.json` for the data) |

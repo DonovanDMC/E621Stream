@@ -20,6 +20,7 @@
     "start": "bun run src/index.ts",
     "build": "bun run scripts/build.ts",
     "build:pages": "bun run scripts/pages.ts",
+    "backfill": "bun run src/backfill/index.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "bun test",
@@ -28,7 +29,8 @@
   },
   "dependencies": {
     "@yiffy/debug": "^0.0.1",
-    "e621": "^3.5.0"
+    "e621": "^3.5.0",
+    "e621-export-downloader": "1.1.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

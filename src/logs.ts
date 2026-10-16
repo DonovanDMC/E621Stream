@@ -2,6 +2,7 @@ import { accessSync, constants, createWriteStream, mkdirSync, readdirSync, rmSyn
 import { join } from "node:path";
 
 import { e621BaseURL, logDir, logRetentionDays } from "./config.ts";
+import { count } from "./metrics.ts";
 
 class DailyLog {
     private date = "";
@@ -48,8 +49,11 @@ function username(headers: Headers): string {
     return atob(auth.slice(6)).split(":")[0] ?? "-";
 }
 
-/** logs every request made to e621, retries included, since the module calls fetch once per attempt */
-function logRequests(log: DailyLog): void {
+/**
+ * counts every request made to e621 for the status page, and logs them if there's a log, retries included since the
+ * module calls fetch once per attempt
+ */
+function watchRequests(role: string, log: DailyLog | null): void {
     const host = new URL(e621BaseURL).host;
     const original = globalThis.fetch;
     const logged = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -59,31 +63,46 @@ function logRequests(log: DailyLog): void {
         const method = request?.method ?? init?.method ?? "GET";
         const user = username(request?.headers ?? new Headers(init?.headers));
         const start = performance.now();
-        const line = (result: string): void => { log.write(`${new Date().toISOString()} ${method} ${result} ${Math.round(performance.now() - start)}ms ${url} ${user}\n`); };
+        const line = (result: string): void => {
+            const ms = Math.round(performance.now() - start);
+            count(`request_ms.${role}`, ms);
+            log?.write(`${new Date().toISOString()} ${method} ${result} ${ms}ms ${url} ${user}\n`);
+        };
+        count(`requests.${role}`);
         try {
             const res = await original(input, init);
             line(String(res.status));
+            if (res.status === 429) count(`ratelimited.${role}`);
+            if (res.status >= 400) count(`failed.${role}`);
             return res;
         } catch (err) {
             line(`failed (${String(err)})`);
+            count(`failed.${role}`);
             throw err;
         }
     };
     globalThis.fetch = Object.assign(logged, { preconnect: original.preconnect.bind(original) });
 }
 
-export function startLogging(role: string): void {
-    if (!logDir) return;
+function openLogs(): boolean {
+    if (!logDir) return false;
     try {
         mkdirSync(logDir, { recursive: true });
         // docker creates missing bind mounts as root
         accessSync(logDir, constants.W_OK);
+        return true;
     } catch (err) {
         console.error(`can't write to ${logDir}, logging to files is disabled: ${String(err)}`);
-        return;
+        return false;
     }
-    const app = new DailyLog(role);
-    tee(process.stdout, app);
-    tee(process.stderr, app);
-    logRequests(new DailyLog(`requests-${role}`));
+}
+
+export function startLogging(role: string): void {
+    const files = openLogs();
+    if (files) {
+        const app = new DailyLog(role);
+        tee(process.stdout, app);
+        tee(process.stderr, app);
+    }
+    watchRequests(role, files ? new DailyLog(`requests-${role}`) : null);
 }
