@@ -1,6 +1,7 @@
 import { listStates, type BackfillState } from "../backfill/state.ts";
 import { clientsKey, feedsKey, idleKey, idlePollScale, redisPrefix, streamKey } from "../config.ts";
 import { recent, totals, type Counts } from "../metrics.ts";
+import { NAV, NAV_CSS, navHTML } from "../nav.ts";
 import redis from "../redis.ts";
 
 import { hubStats } from "./hub.ts";
@@ -188,9 +189,11 @@ td.detail { max-width: 360px; overflow-wrap: anywhere; }
 .bar { display: inline-block; width: 80px; height: 8px; background: var(--border); border-radius: 4px; margin-right: 6px; vertical-align: middle; overflow: hidden; }
 .bar div { height: 100%; background: var(--ok); }
 footer { margin-top: 32px; font-size: 0.85em; opacity: 0.7; }
+${NAV_CSS}
 </style>
 </head>
 <body>
+${navHTML(NAV, "/status")}
 <main>
 <h1>E621Stream status</h1>
 <p>${data.ingester.idle ? `Nobody's connected, so feeds are polled ${data.ingester.idle_poll_scale}x slower and the backfill gets the spare requests.` : `${num(data.ingester.clients)} client(s) connected, feeds are polled at full speed.`}</p>
