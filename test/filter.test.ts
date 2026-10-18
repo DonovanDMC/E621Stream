@@ -135,6 +135,13 @@ describe("id filters", () => {
         expect(matches(compile({ type: "post_set.update", filter: { set_ids: [9] } }), event("post_set.update", { post_set: { id: 9 }, changes: {} }))).toBe(true);
     });
 
+    test("user updates filter by the user and the kind of change", () => {
+        const level = event("user.update", { id: 1, action: "user_level_change", creator_id: 2, values: { user_id: 8, level: "Privileged", level_was: "Member" } });
+        expect(matches(compile({ type: "user.update", filter: { user_ids: [8] } }), level)).toBe(true);
+        expect(matches(compile({ type: "user.*", filter: { actions: ["user_level_change"] } }), level)).toBe(true);
+        expect(matches(compile({ type: "user.update", filter: { actions: ["user_name_change"] } }), level)).toBe(false);
+    });
+
     test("bad ids are rejected", () => {
         expect(() => compile({ type: "*", filter: { post_ids: ["1"] } })).toThrow(FilterError);
     });
