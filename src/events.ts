@@ -77,6 +77,7 @@ export const EVENT_TYPES = [
     "takedown.update",
     "upload_karma_event.create",
     "user.create",
+    "user.delete",
     "user.update",
     "user_feedback.create",
     "user_feedback.delete",
@@ -116,6 +117,8 @@ export const MOD_ACTION_EVENTS: Partial<Record<string, EventType>> = {
     user_feedback_undelete: "user_feedback.undelete",
     user_feedback_destroy: "user_feedback.destroy",
     wiki_page_delete: "wiki_page.delete",
+    user_delete: "user.delete",
+    admin_user_delete: "user.delete",
     // users have no updated_at
     user_name_change: "user.update",
     user_level_change: "user.update",

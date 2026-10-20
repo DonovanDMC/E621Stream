@@ -140,6 +140,7 @@ describe("id filters", () => {
         expect(matches(compile({ type: "user.update", filter: { user_ids: [8] } }), level)).toBe(true);
         expect(matches(compile({ type: "user.*", filter: { actions: ["user_level_change"] } }), level)).toBe(true);
         expect(matches(compile({ type: "user.update", filter: { actions: ["user_name_change"] } }), level)).toBe(false);
+        expect(matches(compile({ type: "user.delete", filter: { user_ids: [8] } }), event("user.delete", { id: 2, action: "user_delete", creator_id: 8, values: { user_id: 8 } }))).toBe(true);
     });
 
     test("bad ids are rejected", () => {

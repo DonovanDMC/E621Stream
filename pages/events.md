@@ -19,7 +19,7 @@
 | `note_version.create`, `pool_version.create`, `wiki_page_version.create`, `artist_version.create`, `avoid_posting_version.create`, `tag_type_version.create` | |
 | `tag_alias.create`, `tag_implication.create`, `bulk_update_request.create` | |
 | `user.create`, `user_feedback.create`, `ban.create`, `takedown.create`, `news_update.create` | |
-| `user.update` | mod action, see [Mod Action Events](#mod-action-events) |
+| `user.update`, `user.delete` | mod action, see [Mod Action Events](#mod-action-events) |
 | `mod_action.create` | |
 | `*.update` | see [Update events](#update-events) |
 | `pool.add_posts`, `pool.remove_posts`, `post_set.add_posts`, `post_set.remove_posts` | see [Pool and set posts](#pool-and-set-posts) |
@@ -90,6 +90,7 @@ Hidden and deleted records disappear from e621's API, and some changes are only 
 | `tag.delete` | `tag_destroy` | `name` |
 | `user_feedback.update`, `user_feedback.delete`, `user_feedback.undelete`, `user_feedback.destroy` | `user_feedback_update`, `user_feedback_delete`, `user_feedback_undelete`, `user_feedback_destroy` | `user_id`, `reason`, `type`, `record_id`, and `reason_was`/`type_was` except for destroy |
 | `user.update` | `user_name_change`, `user_level_change`, `user_flags_change`, `user_upload_limit_change`, `user_karma_change`, `user_karma_free_toggle`, `user_uploads_toggle`, `user_custom_title_change`, `user_avatar_clear`, `user_profile_clear`, `user_text_change`, `user_blacklist_changed` | `user_id`, plus the old and new value where there is one (`level`/`level_was`, `old_upload_limit`/`new_upload_limit`, `added`/`removed` flags, …). Only changes made by staff are logged, so a user editing their own profile, avatar or blacklist doesn't send one. Filter by kind of change with `actions` |
+| `user.delete` | `user_delete` (the user deleted their own account), `admin_user_delete` (staff deleted it) | `user_id` |
 | `ban.update` | `user_ban_update` | `user_id`, `ban_id`, `expires_at`, `expires_at_was`, `reason`, … |
 | `ban.delete` | `user_unban` | `user_id` |
 | `takedown.delete` | `takedown_delete` | `takedown_id` |
