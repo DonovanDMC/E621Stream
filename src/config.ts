@@ -23,6 +23,7 @@ export const cursorKey = `${redisPrefix}:cursors`;
 export const feedsKey = `${redisPrefix}:feeds`;
 export const clientsKey = `${redisPrefix}:clients`;
 export const idleKey = `${redisPrefix}:ingester:idle`;
+export const dataKey = `${redisPrefix}:data`;
 export const databaseURL = Bun.env.DATABASE_URL ?? "postgres://e621stream:e621stream@postgres:5432/e621stream";
 
 // e621

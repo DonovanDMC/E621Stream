@@ -6,6 +6,7 @@ import { migrate } from "../db.ts";
 import { AuthError, hasAuth } from "../e621.ts";
 import redis from "../redis.ts";
 
+import { startDataCounts } from "./data.ts";
 import { Feed, FEEDS } from "./feeds.ts";
 import { idleScale, onWake, startIdleWatch } from "./idle.ts";
 import { PostsFeed } from "./posts.ts";
@@ -88,4 +89,5 @@ export async function startIngester(): Promise<void> {
     }
     setInterval(() => void trim().catch((err: unknown) => { Debug("ingester:trim", `failed: ${String(err)}`); }), 60_000);
     if (backfillEnabled) startBackfill();
+    startDataCounts();
 }

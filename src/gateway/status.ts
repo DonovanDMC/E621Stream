@@ -1,5 +1,5 @@
 import { listStates, type BackfillState } from "../backfill/state.ts";
-import { clientsKey, feedsKey, idleKey, idlePollScale, redisPrefix, streamKey } from "../config.ts";
+import { clientsKey, cursorKey, dataKey, feedsKey, idleKey, idlePollScale, redisPrefix, streamKey } from "../config.ts";
 import { recent, totals, type Counts } from "../metrics.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
 import redis from "../redis.ts";
@@ -7,6 +7,7 @@ import redis from "../redis.ts";
 import { hubStats } from "./hub.ts";
 import { sessions } from "./session.ts";
 
+import type { DataCounts } from "../ingester/data.ts";
 import type { FeedHealth } from "../ingester/index.ts";
 
 const sum = (counts: Counts, prefix: string): number => Object.entries(counts).reduce((total, [field, n]) => field === prefix || field.startsWith(`${prefix}.`) ? total + n : total, 0);
@@ -19,6 +20,53 @@ const eventsOf = (counts: Counts): number => counts.events ?? 0;
 const requestsOf = (counts: Counts): number => sum(counts, "requests") - (counts["requests.backfill"] ?? 0) - (counts["requests.private"] ?? 0);
 const avgMs = (ms: number, requests: number): number | null => requests === 0 ? null : Math.round(ms / requests);
 const averageOf = (counts: Counts): number | null => avgMs(sum(counts, "request_ms"), requestsOf(counts));
+
+const MODELS = [
+    { resource: "post", label: "Posts", newest: "posts:max_id", feeds: ["posts"] },
+    { resource: "comment", label: "Comments", newest: "comments", feeds: ["comments", "comment_updates"] },
+    { resource: "forum_post", label: "Forum posts", newest: "forum_posts", feeds: ["forum_posts", "forum_post_updates"] },
+    { resource: "forum_topic", label: "Forum topics", newest: "forum_topics", feeds: ["forum_topics", "forum_topic_updates"] },
+    { resource: "post_set", label: "Post sets", newest: "post_sets", feeds: ["post_sets", "post_set_updates"] },
+    { resource: "post_flag", label: "Post flags", newest: "post_flags", feeds: ["post_flags", "post_flag_updates"] },
+    { resource: "takedown", label: "Takedowns", newest: "takedowns", feeds: ["takedowns", "takedown_updates"] },
+    { resource: "tag_alias", label: "Tag aliases", newest: "tag_aliases", feeds: ["tag_aliases", "tag_alias_updates"] },
+    { resource: "tag_implication", label: "Tag implications", newest: "tag_implications", feeds: ["tag_implications", "tag_implication_updates"] },
+    { resource: "bulk_update_request", label: "Bulk update requests", newest: "bulk_update_requests", feeds: ["bulk_update_requests", "bulk_update_request_updates"] },
+    { resource: "news_update", label: "News updates", newest: "news_updates", feeds: ["news_updates", "news_update_updates"] },
+    { resource: "help_page", label: "Help pages", newest: "help_pages:max_id", feeds: ["help_pages"] },
+];
+
+interface Model {
+    label: string;
+    lag_ms: number | null;
+    last_checked_at: string | null;
+    newest_id: number | null;
+    /**
+     * the newest id minus what's stored, an upper bound on what's missing, since deleted and hidden records have ids
+     * that are never seen
+     */
+    not_stored: number | null;
+    resource: string;
+    stored: number;
+}
+
+function models(counts: DataCounts | null, cursors: Record<string, string>, feeds: Array<FeedHealth & { name: string }>): Array<Model> {
+    return MODELS.map(({ feeds: names, label, newest, resource }) => {
+        const health = names.map(name => feeds.find(feed => feed.name === name)).filter(feed => feed !== undefined);
+        const checked = health.map(feed => feed.last_ok_at);
+        const stored = counts?.resources[resource]?.stored ?? 0;
+        const newestId = cursors[newest] === undefined ? null : Number(cursors[newest]);
+        return {
+            resource,
+            label,
+            stored,
+            newest_id: newestId,
+            not_stored: newestId === null ? null : Math.max(0, newestId - stored),
+            last_checked_at: checked.length === 0 || checked.includes(null) ? null : checked.sort()[0]!,
+            lag_ms: health.length === 0 ? null : Math.max(...health.map(feed => feed.interval_ms)),
+        };
+    });
+}
 
 interface Backfill extends BackfillState {
     eta_seconds: number | null;
@@ -38,7 +86,7 @@ function backfillProgress(state: BackfillState): Backfill {
 }
 
 async function build(): Promise<Record<string, unknown>> {
-    const [minutes, hours, allTime, length, oldest, startedAt, feeds, backfill, clients, idle] = await Promise.all([
+    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors] = await Promise.all([
         recent("minute", 60),
         recent("hour", 24),
         totals(),
@@ -49,7 +97,10 @@ async function build(): Promise<Record<string, unknown>> {
         listStates().then(states => states.map(backfillProgress)).catch((err: unknown) => ({ error: String(err) })),
         redis.send("HVALS", [clientsKey]).then(counts => (counts as Array<string>).reduce((total, n) => total + Number(n), 0)),
         redis.get(idleKey),
+        redis.get(dataKey).then(raw => raw === null ? null : JSON.parse(raw) as DataCounts),
+        redis.send("HGETALL", [cursorKey]) as Promise<Record<string, string> | null>,
     ]);
+    const feeds = Object.entries(feedHealth ?? {}).map(([name, health]) => ({ name, ...JSON.parse(health) as FeedHealth })).sort((a, b) => a.name.localeCompare(b.name));
     const hour = add(minutes.map(m => m.counts)), day = add(hours.map(h => h.counts));
     const byType = Object.entries(day).filter(([field]) => field.startsWith("events.")).map(([field, n]) => ({ type: field.slice(7), count: n })).sort((a, b) => b.count - a.count);
     const roles = [...new Set(Object.keys(allTime).filter(field => field.startsWith("requests.")).map(field => field.slice(9)))].sort();
@@ -85,8 +136,9 @@ async function build(): Promise<Record<string, unknown>> {
             per_minute: minutes.map(m => ({ at: new Date(m.at).toISOString(), events: eventsOf(m.counts) })),
         },
         gateway: { connections: sessions.size, events_received: hubStats.received },
-        feeds: Object.entries(feeds ?? {}).map(([name, health]) => ({ name, ...JSON.parse(health) as FeedHealth })).sort((a, b) => a.name.localeCompare(b.name)),
+        feeds,
         backfill,
+        data: { counted_at: counts?.computed_at ?? null, models: models(counts, cursors ?? {}, feeds) },
     };
 }
 
@@ -130,6 +182,7 @@ const STATUS_CLASS: Record<string, string> = { done: "ok", running: "run", faile
 export async function statusPage(): Promise<string> {
     const data = await status() as {
         backfill: Array<Backfill> | { error: string };
+        data: { counted_at: string | null; models: Array<Model> };
         events: { by_type_last_24h: Array<{ count: number; type: string }>; last_24h: number; last_event_at: string | null; last_hour: number; oldest_retained_at: string | null; per_minute: Array<{ events: number }>; per_minute_last_hour: number; retained: number; total: number };
         feeds: Array<FeedHealth & { name: string }>;
         gateway: { connections: number };
@@ -138,6 +191,10 @@ export async function statusPage(): Promise<string> {
         requests: { avg_ms: Record<string, number | null>; by_role: Record<string, { last_24h: Record<string, number | null>; last_hour: Record<string, number | null> }>; failed: Counts; last_24h: number; last_hour: number; per_minute: Array<{ avg_ms: number | null; failed: number; requests: number }>; per_second_last_hour: number; ratelimited: Counts; total: number };
     };
     const { backfill, events, feeds, requests } = data;
+    const backfillDone = Array.isArray(backfill) && backfill.length !== 0 && backfill.every(b => b.status === "done");
+    const modelRows = data.data.models.map(m => `<tr><td>${esc(m.label)}</td><td class="n">${num(m.stored)}</td>
+        <td class="n">${m.newest_id === null ? "" : num(m.newest_id)}</td><td class="n">${m.not_stored === null ? "" : `up to ${num(m.not_stored)}`}</td>
+        <td>${ago(m.last_checked_at)}</td><td>${m.lag_ms === null ? "" : `within ${duration(Math.round(m.lag_ms / 1000))}`}</td></tr>`).join("");
     const stat = (label: string, value: string, sub = ""): string => `<div class="stat"><div class="value">${value}</div><div class="label">${esc(label)}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
     const backfillRows = Array.isArray(backfill)
         ? backfill.sort((a, b) => a.source.localeCompare(b.source)).map(b => `<tr>
@@ -226,10 +283,17 @@ ${chart(requests.per_minute.map(m => m.avg_ms ?? 0), "ms average")}
 ${roleRows}
 </table></div>
 
-<h2>Backfill</h2>
+${backfillDone ? "" : `<h2>Backfill</h2>
 <div class="table-wrap"><table>
 <tr><th>source</th><th>from</th><th>status</th><th>progress</th><th>stored</th><th>left</th><th></th></tr>
 ${backfillRows}
+</table></div>`}
+
+<h2>Data</h2>
+<p class="dim">Every record update events are compared against. "Not stored" is the newest id minus what's stored, so it counts deleted and hidden records that were never visible too. Changes show up within the slowest of each model's feeds, which is ${num(data.ingester.idle_poll_scale)}x slower while nobody's connected. Counted ${ago(data.data.counted_at)}.</p>
+<div class="table-wrap"><table>
+<tr><th>model</th><th>stored</th><th>newest on e621</th><th>not stored</th><th>last checked</th><th>changes show up</th></tr>
+${modelRows}
 </table></div>
 
 <h2>Feeds</h2>
