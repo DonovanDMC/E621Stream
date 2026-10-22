@@ -4,6 +4,7 @@
 - [Update Events](#update-events)
 - [Pool and Set Posts](#pool-and-set-posts)
 - [Mod Action Events](#mod-action-events)
+- [Private Events](#private-events)
 
 ## Event Types
 
@@ -83,16 +84,30 @@ Hidden and deleted records disappear from e621's API, and some changes are only 
 | `forum_post.hide`, `forum_post.unhide`, `forum_post.delete` | `forum_post_hide`, `forum_post_unhide`, `forum_post_delete` | `forum_post_id`, `forum_topic_id`, `user_id` |
 | `post_version.hide`, `post_version.unhide` | `post_version_hide`, `post_version_unhide` | `post_id`, `version` |
 | `pool.delete` | `pool_delete` | `pool_id`, `pool_name`, `user_id` |
-| `post_set.delete` | `set_delete` | `set_id`, `user_id`. Only logged when staff delete someone else's set |
+| `post_set.delete` | `set_delete` | `set_id`, `user_id` (only when staff delete someone else's set) |
 | `wiki_page.delete` | `wiki_page_delete` | `wiki_page_id`, `wiki_page` |
 | `artist.delete` | `artist_delete` | `artist_id`, `artist_name` |
 | `avoid_posting.delete`, `avoid_posting.undelete`, `avoid_posting.destroy` | `avoid_posting_delete`, `avoid_posting_undelete`, `avoid_posting_destroy` | `id`, `artist_name` |
 | `tag.delete` | `tag_destroy` | `name` |
-| `user_feedback.update`, `user_feedback.delete`, `user_feedback.undelete`, `user_feedback.destroy` | `user_feedback_update`, `user_feedback_delete`, `user_feedback_undelete`, `user_feedback_destroy` | `user_id`, `reason`, `type`, `record_id`, and `reason_was`/`type_was` except for destroy |
-| `user.update` | `user_name_change`, `user_level_change`, `user_flags_change`, `user_upload_limit_change`, `user_karma_change`, `user_karma_free_toggle`, `user_uploads_toggle`, `user_custom_title_change`, `user_avatar_clear`, `user_profile_clear`, `user_text_change`, `user_blacklist_changed` | `user_id`, plus the old and new value where there is one (`level`/`level_was`, `old_upload_limit`/`new_upload_limit`, `added`/`removed` flags, …). Only changes made by staff are logged, so a user editing their own profile, avatar or blacklist doesn't send one. Filter by kind of change with `actions` |
-| `user.delete` | `user_delete` (the user deleted their own account), `admin_user_delete` (staff deleted it) | `user_id` |
-| `ban.update` | `user_ban_update` | `user_id`, `ban_id`, `expires_at`, `expires_at_was`, `reason`, … |
+| `user_feedback.update`, `user_feedback.delete`, `user_feedback.undelete`, `user_feedback.destroy` | `user_feedback_update`, `user_feedback_delete`, `user_feedback_undelete`, `user_feedback_destroy` | `user_id`, `reason`, `type`, `record_id`, `reason_was`/`type_was` (not on destroy) |
+| `user.update` | `user_name_change`, `user_level_change`, `user_flags_change`, `user_upload_limit_change`, `user_karma_change`, `user_karma_free_toggle`, `user_uploads_toggle`, `user_custom_title_change`, `user_avatar_clear`, `user_profile_clear`, `user_text_change`, `user_blacklist_changed` | `user_id`, and the old/new values if there are any (`level`/`level_was`, etc). Only staff changes are logged, users editing their own profile won't send these |
+| `user.delete` | `user_delete` (by the user), `admin_user_delete` (by staff) | `user_id` |
+| `ban.update` | `user_ban_update` | `user_id`, `ban_id`, `expires_at`, `expires_at_was`, `reason`, etc |
 | `ban.delete` | `user_unban` | `user_id` |
 | `takedown.delete` | `takedown_delete` | `takedown_id` |
 
-`user_id` is the record's author, or the user it's about. `topic_ids`, `pool_ids`, `set_ids`, `post_ids` and `user_ids` filters match on `values` (and `user_ids` on `creator_id`). These are published alongside `mod_action.create`, so they stop if `mod_actions` is in `DISABLED_SOURCES`.
+`actions` filters by mod action. `user_ids` matches `values.user_id` and `creator_id`. These go out alongside `mod_action.create`, so disabling `mod_actions` stops them too.
+
+## Private Events
+
+These are polled with your own credentials while you're connected, and only sent to you.
+
+| event | data |
+|---|---|
+| `dmail.create` | a dmail, sent or received (check `from_id`/`to_id`) |
+
+- They have to be subscribed to by name (or `dmail.*`), `*` doesn't include them since each one costs a request per user.
+- They can't be filtered.
+- Your mailbox is checked about once a minute.
+- They aren't stored, so they can't be replayed, and their `id` (`dmail.create:2642532`) isn't a cursor. They have `private: true`.
+- The newest one you've been sent is remembered, so reconnecting sends whatever you missed. The first time, it starts from your newest dmail. After 90 days away it starts over.

@@ -143,6 +143,14 @@ describe("id filters", () => {
         expect(matches(compile({ type: "user.delete", filter: { user_ids: [8] } }), event("user.delete", { id: 2, action: "user_delete", creator_id: 8, values: { user_id: 8 } }))).toBe(true);
     });
 
+    test("private types have to be asked for", () => {
+        expect([...compile("dmail.create").privateTypes]).toEqual(["dmail.create"]);
+        expect([...compile("dmail.*").privateTypes]).toEqual(["dmail.create"]);
+        expect(compile("*").privateTypes.size).toBe(0);
+        expect(compile("dmail.create").types.size).toBe(0);
+        expect(() => compile({ type: "dmail.create", filter: { user_ids: [1] } })).toThrow(FilterError);
+    });
+
     test("bad ids are rejected", () => {
         expect(() => compile({ type: "*", filter: { post_ids: ["1"] } })).toThrow(FilterError);
     });

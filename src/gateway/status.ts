@@ -16,7 +16,7 @@ const add = (list: Array<Counts>): Counts => {
     return out;
 };
 const eventsOf = (counts: Counts): number => counts.events ?? 0;
-const requestsOf = (counts: Counts): number => sum(counts, "requests") - (counts["requests.backfill"] ?? 0);
+const requestsOf = (counts: Counts): number => sum(counts, "requests") - (counts["requests.backfill"] ?? 0) - (counts["requests.private"] ?? 0);
 const avgMs = (ms: number, requests: number): number | null => requests === 0 ? null : Math.round(ms / requests);
 const averageOf = (counts: Counts): number | null => avgMs(sum(counts, "request_ms"), requestsOf(counts));
 

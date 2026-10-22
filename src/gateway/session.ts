@@ -12,12 +12,13 @@ import {
     replayBatchSize,
     streamKey,
 } from "../config.ts";
-import { dispatchFrame, EVENT_TYPES, parseEntry, type StreamEvent } from "../events.ts";
+import { dispatchFrame, EVENT_TYPES, parseEntry, type PrivateEventType, type StreamEvent } from "../events.ts";
 import redis, { type StreamEntry } from "../redis.ts";
 
 import { verify, type Credentials, type E621User } from "./auth.ts";
 import { StreamCompressor, type CompressionType } from "./compression.ts";
 import { compile, FilterError, matches, type CompiledSubscription } from "./filter.ts";
+import { removePrivate, updatePrivate, type PrivateMember } from "./private.ts";
 import { CloseCodes, compareIds, parseCursor, PROTOCOL_VERSION, type ClientMessage, type CloseCode, type IdentifyPayload } from "./protocol.ts";
 
 import type { ServerWebSocket } from "bun";
@@ -63,6 +64,7 @@ export class Session {
     private identifyTimer: Timer;
     private lastSent: string | null = null;
     private messageTimes: Array<number> = [];
+    private privateMember: PrivateMember | null = null;
     private subscriptions: Array<CompiledSubscription> = [];
     client: string | null = null;
     readonly id = randomUUID();
@@ -113,6 +115,11 @@ export class Session {
         this.lastSent = event.id;
         this.send(dispatchFrame(event));
         return true;
+    }
+
+    private deliverPrivate(type: PrivateEventType, data: { created_at?: string; id: number }): void {
+        if (this.state === "pending" || this.state === "closed" || !this.privateMember?.privateTypes.has(type)) return;
+        this.send({ op: "dispatch", id: `${type}:${data.id}`, type, time: data.created_at ?? new Date().toISOString(), private: true, data });
     }
 
     private async identify(d: IdentifyPayload | undefined): Promise<void> {
@@ -170,7 +177,7 @@ export class Session {
             }
         }
 
-        this.subscriptions = subs;
+        if (!this.setSubscriptions(subs)) return;
         this.client = typeof d.client === "string" ? d.client.slice(0, 100) : null;
         Debug("gateway:session", `${this.id} identified from ${this.ws.data.ip} (user: ${this.user ? `${this.user.name} #${this.user.id}` : "none"}, client: ${this.client ?? "unknown"}, ${subs.length} subscription(s)${cursor ? `, replaying from ${cursor}` : ""})`);
 
@@ -226,7 +233,22 @@ export class Session {
         } else {
             this.ws.sendText(data, true);
         }
-        if (this.buffered() > maxBufferedBytes) this.close(CloseCodes.SLOW_CONSUMER, "too far behind, events are being sent faster than they're read");
+        if (this.buffered() > maxBufferedBytes) this.close(CloseCodes.SLOW_CONSUMER, "too slow");
+    }
+
+    private setSubscriptions(subs: Array<CompiledSubscription>): boolean {
+        const privateTypes = new Set(subs.flatMap(sub => [...sub.privateTypes]));
+        if (privateTypes.size !== 0 && (!this.credentials || !this.user)) {
+            this.close(CloseCodes.INVALID_SUBSCRIPTION, `${[...privateTypes].join(", ")} require auth`);
+            return false;
+        }
+        this.subscriptions = subs;
+        if (this.credentials && this.user) {
+            this.privateMember ??= { credentials: this.credentials, userId: this.user.id, privateTypes, deliverPrivate: (type, data): void => { this.deliverPrivate(type, data); } };
+            this.privateMember.privateTypes = privateTypes;
+            updatePrivate(this.privateMember);
+        }
+        return true;
     }
 
     cleanup(): void {
@@ -234,6 +256,7 @@ export class Session {
         clearTimeout(this.identifyTimer);
         this.compressor?.close();
         sessions.delete(this);
+        if (this.privateMember) removePrivate(this.privateMember);
         bump(connectionsByIP, this.ws.data.ip, -1);
         if (this.user) bump(connectionsByUser, this.user.id, -1);
     }
@@ -281,8 +304,7 @@ export class Session {
                     return;
                 }
                 const subs = this.compileSubscriptions((msg.d as { subscriptions?: unknown } | undefined)?.subscriptions);
-                if (!subs) return;
-                this.subscriptions = subs;
+                if (!subs || !this.setSubscriptions(subs)) return;
                 this.send({ op: "subscribed", d: { subscriptions: subs.map(s => s.source) } });
                 break;
             }

@@ -34,6 +34,8 @@ export const e621AuthKey = Bun.env.E621_AUTH_KEY?.trim();
 // e621's limit is 2/s
 export const e621RequestIntervalMS = int("E621_REQUEST_INTERVAL_MS", 550);
 export const e621AuthRequestIntervalMS = int("E621_AUTH_REQUEST_INTERVAL_MS", 1000);
+export const e621PrivateRequestIntervalMS = int("E621_PRIVATE_REQUEST_INTERVAL_MS", 1000);
+export const privatePollIntervalMS = int("PRIVATE_POLL_INTERVAL_MS", 60_000);
 export const backfillEnabled = bool("BACKFILL", true);
 export const disabledSources = new Set(list("DISABLED_SOURCES"));
 export const pollIntervalScale = int("POLL_INTERVAL_SCALE", 1);

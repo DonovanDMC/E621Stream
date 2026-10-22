@@ -8,6 +8,7 @@ import { parseBasicAuth } from "./auth.ts";
 import { COMPRESSION_TYPES, isCompressionType, type CompressionType } from "./compression.ts";
 import { hubStats, startHub } from "./hub.ts";
 import { connectionsChanged, startPresence } from "./presence.ts";
+import { startPrivate } from "./private.ts";
 import { PROTOCOL_VERSION } from "./protocol.ts";
 import { connectionCount, Session, sessions, type SocketData } from "./session.ts";
 import { status, statusPage } from "./status.ts";
@@ -99,6 +100,7 @@ export function startGateway(): void {
     });
 
     void startHub();
+    void startPrivate().catch((err: unknown) => { Debug("gateway:private", `couldn't start: ${String(err)}`); });
     startPresence();
     setInterval(() => {
         for (const session of sessions) void session.recheckAuth().catch(() => null);

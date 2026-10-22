@@ -50,7 +50,7 @@ The stack runs four containers:
 
 Everything the ingester's account can see is rebroadcast publicly, so use an account without staff permissions. Known-sensitive fields such as `ip_addr` are stripped either way.
 
-Requests to e621 start `E621_REQUEST_INTERVAL_MS` apart (default 550ms, just under e621's 2 req/s limit), with at most two in flight so a slow connection can't bunch them up. The gateway's credential checks have their own queue, spaced `E621_AUTH_REQUEST_INTERVAL_MS` apart (default 1000ms) since they share the ingester's IP. A 429 is retried after its `Retry-After`, back in the queue like any other request.
+Requests to e621 start `E621_REQUEST_INTERVAL_MS` apart (default 550ms, just under e621's 2 req/s limit), with at most two in flight so a slow connection can't bunch them up. Every process reserves its starts against one shared clock in Redis, so the ingester, the gateways' credential checks (`E621_AUTH_REQUEST_INTERVAL_MS`, default 1000ms) and private event polling (`E621_PRIVATE_REQUEST_INTERVAL_MS`, default 1000ms) stay under the limit together. Private events are polled every `PRIVATE_POLL_INTERVAL_MS` (default a minute) per connected user, by one gateway at a time. A 429 is retried after its `Retry-After`, back in the queue like any other request.
 
 ### Backfill
 

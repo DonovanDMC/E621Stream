@@ -1,7 +1,8 @@
 import Debug from "@yiffy/debug";
 import E621, { RatelimitError, UnexpectedResponseError } from "e621";
 
-import { e621AuthKey, e621AuthUser, e621AuthRequestIntervalMS, e621BaseURL, e621RequestIntervalMS, e621UserAgent } from "./config.ts";
+import { e621AuthKey, e621AuthUser, e621AuthRequestIntervalMS, e621BaseURL, e621PrivateRequestIntervalMS, e621RequestIntervalMS, e621UserAgent, redisPrefix } from "./config.ts";
+import redis from "./redis.ts";
 
 export class AuthError extends Error {
     constructor(what: string, status: number) {
@@ -35,18 +36,25 @@ const MAX_IN_FLIGHT = 2;
 
 export interface Scheduler { schedule<T>(fn: () => Promise<T>): Promise<T> }
 
-/**
- * spaces request starts out so everything sharing a queue stays under e621's rate limit. requests don't wait for the
- * previous one to finish, a response takes longer than the interval so that would make it the limit instead
- */
+// every process shares one ip, so starts are reserved in redis
+const RESERVE = `
+local now = tonumber(ARGV[1])
+local start = math.max(now, tonumber(redis.call("GET", KEYS[1]) or "0") + tonumber(ARGV[2]))
+redis.call("SET", KEYS[1], start, "PX", 60000)
+return start
+`;
+async function reserve(): Promise<number> {
+    return Number(await redis.send("EVAL", [RESERVE, "1", `${redisPrefix}:e621:last_request`, String(Date.now()), String(e621RequestIntervalMS)]));
+}
+
 export class RequestQueue implements Scheduler {
     private inFlight = 0;
     private lastStart = 0;
+    private reserving = false;
     private timer: ReturnType<typeof setTimeout> | null = null;
     private waiting: Array<{ background: boolean; start(): void }> = [];
-    /** the same queue, for work that should only get the slots nothing else wants */
     readonly background: Scheduler = { schedule: fn => this.enqueue(fn, true) };
-    constructor(private readonly intervalMS: number) {}
+    constructor(private readonly intervalMS: number, private readonly shared = false) {}
 
     private enqueue<T>(fn: () => Promise<T>, background: boolean): Promise<T> {
         return new Promise<T>((resolve, reject) => {
@@ -65,8 +73,7 @@ export class RequestQueue implements Scheduler {
     }
 
     private pump(): void {
-        // when the connection is slow, requests sent apart can still arrive together, this caps how many can
-        if (this.timer || this.waiting.length === 0 || this.inFlight >= MAX_IN_FLIGHT) return;
+        if (this.timer || this.reserving || this.waiting.length === 0 || this.inFlight >= MAX_IN_FLIGHT) return;
         const wait = this.lastStart + this.intervalMS - Date.now();
         if (wait > 0) {
             this.timer = setTimeout(() => {
@@ -75,10 +82,27 @@ export class RequestQueue implements Scheduler {
             }, wait);
             return;
         }
+        if (!this.shared) {
+            this.startNext();
+            return;
+        }
+        this.reserving = true;
+        void reserve()
+            .then(start => start > Date.now() ? Bun.sleep(start - Date.now()) : undefined)
+            // no redis, only this process's requests get spaced out
+            .catch(() => null)
+            .then(() => {
+                this.reserving = false;
+                this.startNext();
+            });
+    }
+
+    private startNext(): void {
         const foreground = this.waiting.findIndex(item => !item.background);
         const [next] = this.waiting.splice(foreground === -1 ? 0 : foreground, 1);
+        if (!next) return;
         this.lastStart = Date.now();
-        next!.start();
+        next.start();
         this.pump();
     }
 
@@ -87,10 +111,9 @@ export class RequestQueue implements Scheduler {
     }
 }
 
-// the ingester's polling and consumer credential checks each get their own, so a backlog of one can't stall the other.
-// the backfill shares the ingester's, in the gaps between polls
-export const ingestQueue = new RequestQueue(e621RequestIntervalMS);
-export const authQueue = new RequestQueue(e621AuthRequestIntervalMS);
+export const ingestQueue = new RequestQueue(e621RequestIntervalMS, true);
+export const authQueue = new RequestQueue(e621AuthRequestIntervalMS, true);
+export const privateQueue = new RequestQueue(e621PrivateRequestIntervalMS, true);
 export const backfillQueue = ingestQueue.background;
 
 function statusOf(err: unknown): number | null {

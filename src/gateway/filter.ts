@@ -1,4 +1,4 @@
-import { EVENT_TYPES, isEventType, MOD_ACTION_EVENT_TYPES, VERSION_EVENTS, type EventType, type StreamEvent } from "../events.ts";
+import { EVENT_TYPES, isEventType, isPrivateEventType, MOD_ACTION_EVENT_TYPES, PRIVATE_EVENT_TYPES, VERSION_EVENTS, type EventType, type PrivateEventType, type StreamEvent } from "../events.ts";
 
 export interface Filter {
     actions?: Array<string>;
@@ -21,6 +21,7 @@ export interface CompiledSubscription {
     actions: Set<string> | null;
     poolIds: Set<number> | null;
     postIds: Set<number> | null;
+    privateTypes: Set<PrivateEventType>;
     setIds: Set<number> | null;
     source: Subscription;
     tags: TagQuery | null;
@@ -73,16 +74,17 @@ function idSet(name: string, value: unknown): Set<number> | null {
     return new Set(value as Array<number>);
 }
 
-function resolveTypes(type: string): Set<EventType> {
-    if (type === "*") return new Set(EVENT_TYPES);
+function resolveTypes(type: string): { privateTypes: Set<PrivateEventType>; types: Set<EventType> } {
+    if (type === "*") return { types: new Set(EVENT_TYPES), privateTypes: new Set() };
     if (type.endsWith(".*")) {
         const prefix = type.slice(0, -1);
-        const types = EVENT_TYPES.filter(t => t.startsWith(prefix));
-        if (types.length === 0) throw new FilterError(`unknown event type "${type}"`);
-        return new Set(types);
+        const types = EVENT_TYPES.filter(t => t.startsWith(prefix)), privateTypes = PRIVATE_EVENT_TYPES.filter(t => t.startsWith(prefix));
+        if (types.length === 0 && privateTypes.length === 0) throw new FilterError(`unknown event type "${type}"`);
+        return { types: new Set(types), privateTypes: new Set(privateTypes) };
     }
+    if (isPrivateEventType(type)) return { types: new Set(), privateTypes: new Set([type]) };
     if (!isEventType(type)) throw new FilterError(`unknown event type "${type}"`);
-    return new Set([type]);
+    return { types: new Set([type]), privateTypes: new Set() };
 }
 
 export function compile(input: unknown): CompiledSubscription {
@@ -94,9 +96,12 @@ export function compile(input: unknown): CompiledSubscription {
     if (filter.actions !== undefined && (!Array.isArray(filter.actions) || !filter.actions.every(a => typeof a === "string"))) {
         throw new FilterError("actions must be an array of strings");
     }
+    const { privateTypes, types } = resolveTypes(sub.type);
+    if (privateTypes.size !== 0 && sub.filter) throw new FilterError(`${[...privateTypes].join(", ")} can't be filtered`);
     return {
         source: { type: sub.type, ...(sub.filter ? { filter: sub.filter } : {}) },
-        types: resolveTypes(sub.type),
+        types,
+        privateTypes,
         tags: filter.tags ? parseTags(filter.tags) : null,
         postIds: idSet("post_ids", filter.post_ids),
         poolIds: idSet("pool_ids", filter.pool_ids),

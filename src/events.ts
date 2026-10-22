@@ -91,6 +91,12 @@ export const EVENT_TYPES = [
 ] as const;
 export type EventType = typeof EVENT_TYPES[number];
 
+// polled with each user's own credentials, `*` doesn't include these
+export const PRIVATE_EVENT_TYPES = ["dmail.create"] as const;
+export type PrivateEventType = typeof PRIVATE_EVENT_TYPES[number];
+const privateTypeSet = new Set<string>(PRIVATE_EVENT_TYPES);
+export const isPrivateEventType = (type: string): type is PrivateEventType => privateTypeSet.has(type);
+
 // the ingester's account can't see hidden/deleted records, so these come from mod actions
 export const MOD_ACTION_EVENTS: Partial<Record<string, EventType>> = {
     comment_hide: "comment.hide",
