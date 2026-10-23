@@ -219,7 +219,7 @@ export async function statusPage(): Promise<string> {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="15">
+<noscript><meta http-equiv="refresh" content="15"></noscript>
 <title>Status - E621Stream</title>
 <style>
 :root { --bg: #1c1c21; --surface: #242424; --border: #3e4346; --text: #bfbfbf; --heading: #fff; --link: #a9cbea; --ok: #8fd18f; --bad: #e69999; --run: #a9cbea; }
@@ -310,6 +310,23 @@ ${typeRows}
 
 <footer>${num(data.gateway.connections)} connection(s) to this gateway. Ingester up since ${ago(data.ingester.started_at)}. Updated ${esc(new Date(data.generated_at).toUTCString())}, refreshes every 15 seconds. <a href="/status.json">JSON</a></footer>
 </main>
+<script>
+const REFRESH_MS = 15000;
+let timer;
+async function refresh() {
+    clearTimeout(timer);
+    try {
+        const res = await fetch(location.pathname, { cache: "no-store" });
+        if (res.ok) {
+            const next = new DOMParser().parseFromString(await res.text(), "text/html").querySelector("main");
+            if (next) document.querySelector("main").replaceWith(next);
+        }
+    } catch {}
+    if (!document.hidden) timer = setTimeout(refresh, REFRESH_MS);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); else clearTimeout(timer); });
+timer = setTimeout(refresh, REFRESH_MS);
+</script>
 </body>
 </html>`;
 }
