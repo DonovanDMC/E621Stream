@@ -46,4 +46,5 @@ for (const page of pages) {
     await mkdir(dir, { recursive: true });
     await Bun.write(join(dir, "index.html"), html);
 }
+await Bun.write(join(out, "favicon.ico"), Bun.file(join(pagesDir, "favicon.ico")));
 console.log(`built ${pages.length} page(s) into ${out}`);

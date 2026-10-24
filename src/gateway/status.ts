@@ -221,6 +221,7 @@ export async function statusPage(): Promise<string> {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <noscript><meta http-equiv="refresh" content="15"></noscript>
 <title>Status - E621Stream</title>
+<link rel="icon" href="/favicon.ico">
 <style>
 :root { --bg: #1c1c21; --surface: #242424; --border: #3e4346; --text: #bfbfbf; --heading: #fff; --link: #a9cbea; --ok: #8fd18f; --bad: #e69999; --run: #a9cbea; }
 * { box-sizing: border-box; }

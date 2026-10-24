@@ -96,6 +96,6 @@ bun run client --url wss://e621.stream/ws        # or set STREAM_URL
 
 ### Pages
 
-The documentation site is built from `pages/`: each `pages/<name>.md` becomes `/<name>/`, `pages/index.md` is the home page, and `pages/template.html` is the layout. `bun run build:pages` builds it into `dist-pages/`. The `Deploy Pages` workflow deploys it to `https://e621.stream` through [PagesDeployServer](https://github.com/DonovanDMC/PagesDeployServer) whenever `pages/` changes on `master`, or when run by hand.
+The documentation site is built from `pages/`: each `pages/<name>.md` becomes `/<name>/`, `pages/index.md` is the home page, `pages/template.html` is the layout, and `pages/favicon.ico` is copied to the root (it's made from E621OpenAPI's icon, and the status page uses it too). `bun run build:pages` builds it into `dist-pages/`. The `Deploy Pages` workflow deploys it to `https://e621.stream` through [PagesDeployServer](https://github.com/DonovanDMC/PagesDeployServer) whenever `pages/` changes on `master`, or when run by hand.
 
 The site and the gateway share the domain, so the reverse proxy sends `/ws`, `/health`, `/stats`, `/info`, `/status` and `/status.json` to the gateway and everything else to the pages. The gateway's service info is at `/info` (and `/` when reached directly).
