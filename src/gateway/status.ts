@@ -41,11 +41,6 @@ interface Model {
     lag_ms: number | null;
     last_checked_at: string | null;
     newest_id: number | null;
-    /**
-     * the newest id minus what's stored, an upper bound on what's missing, since deleted and hidden records have ids
-     * that are never seen
-     */
-    not_stored: number | null;
     resource: string;
     stored: number;
 }
@@ -61,7 +56,6 @@ function models(counts: DataCounts | null, cursors: Record<string, string>, feed
             label,
             stored,
             newest_id: newestId,
-            not_stored: newestId === null ? null : Math.max(0, newestId - stored),
             last_checked_at: checked.length === 0 || checked.includes(null) ? null : checked.sort()[0]!,
             lag_ms: health.length === 0 ? null : Math.max(...health.map(feed => feed.interval_ms)),
         };
@@ -193,7 +187,7 @@ export async function statusPage(): Promise<string> {
     const { backfill, events, feeds, requests } = data;
     const backfillDone = Array.isArray(backfill) && backfill.length !== 0 && backfill.every(b => b.status === "done");
     const modelRows = data.data.models.map(m => `<tr><td>${esc(m.label)}</td><td class="n">${num(m.stored)}</td>
-        <td class="n">${m.newest_id === null ? "" : num(m.newest_id)}</td><td class="n">${m.not_stored === null ? "" : `up to ${num(m.not_stored)}`}</td>
+        <td class="n">${m.newest_id === null ? "" : num(m.newest_id)}</td>
         <td>${ago(m.last_checked_at)}</td><td>${m.lag_ms === null ? "" : `within ${duration(Math.round(m.lag_ms / 1000))}`}</td></tr>`).join("");
     const stat = (label: string, value: string, sub = ""): string => `<div class="stat"><div class="value">${value}</div><div class="label">${esc(label)}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
     const backfillRows = Array.isArray(backfill)
@@ -291,9 +285,9 @@ ${backfillRows}
 </table></div>`}
 
 <h2>Data</h2>
-<p class="dim">Every record update events are compared against. "Not stored" is the newest id minus what's stored, so it counts deleted and hidden records that were never visible too. Changes show up within the slowest of each model's feeds, which is ${num(data.ingester.idle_poll_scale)}x slower while nobody's connected. Counted ${ago(data.data.counted_at)}.</p>
+<p class="dim">Every record update events are compared against. Deleted and hidden records have ids that are never seen, so the highest id is more than what can be stored. Changes show up within the slowest of each model's feeds, which is ${num(data.ingester.idle_poll_scale)}x slower while nobody's connected. Counted ${ago(data.data.counted_at)}.</p>
 <div class="table-wrap"><table>
-<tr><th>model</th><th>stored</th><th>newest on e621</th><th>not stored</th><th>last checked</th><th>changes show up</th></tr>
+<tr><th>model</th><th>stored</th><th>highest id on e621</th><th>last checked</th><th>changes show up</th></tr>
 ${modelRows}
 </table></div>
 
