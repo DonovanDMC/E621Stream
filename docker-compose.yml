@@ -1,5 +1,9 @@
 x-app: &app
-  build: .
+  build:
+    context: .
+    # GIT_COMMIT=$(git rev-parse HEAD) docker compose up -d --build
+    args:
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}
   image: ghcr.io/donovandmc/e621stream
   restart: always
   init: true

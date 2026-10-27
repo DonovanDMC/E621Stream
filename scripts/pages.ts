@@ -35,13 +35,18 @@ const links: Array<NavLink> = [...NAV, ...extra.map(page => ({ href: page.href, 
 for (const link of NAV) if (link.page && !pages.some(page => page.name === link.page)) throw new Error(`the nav links to pages/${link.page}.md, which doesn't exist`);
 
 const template = await Bun.file(join(pagesDir, "template.html")).text();
+const commit = Bun.env.GITHUB_SHA ?? Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: root }).stdout.toString().trim();
+const version = commit
+    ? `Built from <a href="https://github.com/DonovanDMC/E621Stream/commit/${commit}"><code>${commit.slice(0, 7)}</code></a>. The running service's version is on the <a href="/status">status page</a>.`
+    : "";
 await rm(out, { recursive: true, force: true });
 for (const page of pages) {
     const html = template
         .replace("{{title}}", escapeHTML(page.name === "index" ? page.title : `${page.title} - E621Stream`))
         .replace("{{navStyle}}", () => NAV_CSS)
         .replace("{{header}}", () => navHTML(links, page.href))
-        .replace("{{content}}", () => page.content);
+        .replace("{{content}}", () => page.content)
+        .replace("{{version}}", () => version);
     const dir = page.name === "index" ? out : join(out, page.name);
     await mkdir(dir, { recursive: true });
     await Bun.write(join(dir, "index.html"), html);

@@ -1,5 +1,5 @@
 import { listStates, type BackfillState } from "../backfill/state.ts";
-import { clientsKey, cursorKey, dataKey, feedsKey, idleKey, idlePollScale, redisPrefix, streamKey } from "../config.ts";
+import { clientsKey, cursorKey, dataKey, feedsKey, gitCommit, idleKey, idlePollScale, redisPrefix, repositoryURL, streamKey } from "../config.ts";
 import { recent, totals, type Counts } from "../metrics.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
 import redis from "../redis.ts";
@@ -80,7 +80,7 @@ function backfillProgress(state: BackfillState): Backfill {
 }
 
 async function build(): Promise<Record<string, unknown>> {
-    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors] = await Promise.all([
+    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors, ingesterCommit] = await Promise.all([
         recent("minute", 60),
         recent("hour", 24),
         totals(),
@@ -93,6 +93,7 @@ async function build(): Promise<Record<string, unknown>> {
         redis.get(idleKey),
         redis.get(dataKey).then(raw => raw === null ? null : JSON.parse(raw) as DataCounts),
         redis.send("HGETALL", [cursorKey]) as Promise<Record<string, string> | null>,
+        redis.get(`${redisPrefix}:ingester:commit`),
     ]);
     const feeds = Object.entries(feedHealth ?? {}).map(([name, health]) => ({ name, ...JSON.parse(health) as FeedHealth })).sort((a, b) => a.name.localeCompare(b.name));
     const hour = add(minutes.map(m => m.counts)), day = add(hours.map(h => h.counts));
@@ -106,7 +107,8 @@ async function build(): Promise<Record<string, unknown>> {
     });
     return {
         generated_at: new Date().toISOString(),
-        ingester: { started_at: startedAt, idle: idle === "true", idle_poll_scale: idlePollScale, clients },
+        ingester: { started_at: startedAt, idle: idle === "true", idle_poll_scale: idlePollScale, clients, commit: ingesterCommit },
+        gateway_commit: gitCommit,
         requests: {
             per_second_last_hour: Math.round(requestsOf(hour) / 3600 * 100) / 100,
             avg_ms: { last_hour: averageOf(hour), last_24h: averageOf(day), total: averageOf(allTime) },
@@ -171,6 +173,12 @@ function chart(values: Array<number>, label: string, highlight?: Array<number>):
     return `<svg class="chart" viewBox="0 0 ${values.length * (w + gap)} ${h}" preserveAspectRatio="none" role="img" aria-label="${esc(label)} per minute, last hour">${bars}</svg>`;
 }
 
+const commitLink = (commit: string): string => commit === "unknown" ? "an unknown commit" : `<a href="${repositoryURL}/commit/${esc(commit)}"><code>${esc(commit.slice(0, 7))}</code></a>`;
+function version(gateway: string, ingester: string | null): string {
+    if (!ingester || ingester === gateway) return `Running ${commitLink(gateway)}.`;
+    return `Gateway running ${commitLink(gateway)}, ingester running ${commitLink(ingester)}.`;
+}
+
 const STATUS_CLASS: Record<string, string> = { done: "ok", running: "run", failed: "bad", waiting: "dim", pending: "dim" };
 
 export async function statusPage(): Promise<string> {
@@ -180,8 +188,9 @@ export async function statusPage(): Promise<string> {
         events: { by_type_last_24h: Array<{ count: number; type: string }>; last_24h: number; last_event_at: string | null; last_hour: number; oldest_retained_at: string | null; per_minute: Array<{ events: number }>; per_minute_last_hour: number; retained: number; total: number };
         feeds: Array<FeedHealth & { name: string }>;
         gateway: { connections: number };
+        gateway_commit: string;
         generated_at: string;
-        ingester: { clients: number; idle: boolean; idle_poll_scale: number; started_at: string | null };
+        ingester: { clients: number; commit: string | null; idle: boolean; idle_poll_scale: number; started_at: string | null };
         requests: { avg_ms: Record<string, number | null>; by_role: Record<string, { last_24h: Record<string, number | null>; last_hour: Record<string, number | null> }>; failed: Counts; last_24h: number; last_hour: number; per_minute: Array<{ avg_ms: number | null; failed: number; requests: number }>; per_second_last_hour: number; ratelimited: Counts; total: number };
     };
     const { backfill, events, feeds, requests } = data;
@@ -303,7 +312,7 @@ ${feedRows}
 ${typeRows}
 </table></div>
 
-<footer>${num(data.gateway.connections)} connection(s) to this gateway. Ingester up since ${ago(data.ingester.started_at)}. Updated ${esc(new Date(data.generated_at).toUTCString())}, refreshes every 15 seconds. <a href="/status.json">JSON</a></footer>
+<footer>${num(data.gateway.connections)} connection(s) to this gateway. Ingester up since ${ago(data.ingester.started_at)}. Updated ${esc(new Date(data.generated_at).toUTCString())}, refreshes every 15 seconds. <a href="/status.json">JSON</a><br>${version(data.gateway_commit, data.ingester.commit)}</footer>
 </main>
 <script>
 const REFRESH_MS = 15000;

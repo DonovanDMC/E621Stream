@@ -16,6 +16,9 @@ function list(name: string): Array<string> {
     return (Bun.env[name] ?? "").split(",").map(v => v.trim()).filter(Boolean);
 }
 
+export const gitCommit = Bun.env.GIT_COMMIT?.trim() ? Bun.env.GIT_COMMIT.trim() : "unknown";
+export const repositoryURL = "https://github.com/DonovanDMC/E621Stream";
+
 export const redisURL = Bun.env.REDIS_URL ?? "redis://redis:6379";
 export const redisPrefix = Bun.env.REDIS_PREFIX ?? "e621stream";
 export const streamKey = `${redisPrefix}:events`;

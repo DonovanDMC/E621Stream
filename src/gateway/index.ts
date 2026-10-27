@@ -1,6 +1,6 @@
 import Debug from "@yiffy/debug";
 
-import { authRequired, maxConnectionsPerIP, port, publicURL, trustProxy } from "../config.ts";
+import { authRequired, gitCommit, maxConnectionsPerIP, port, publicURL, trustProxy } from "../config.ts";
 import { EVENT_TYPES } from "../events.ts";
 import redis from "../redis.ts";
 
@@ -51,6 +51,7 @@ export function startGateway(): void {
                     return json({
                         name: "E621Stream",
                         version: PROTOCOL_VERSION,
+                        commit: gitCommit,
                         websocket: publicURL,
                         auth_required: authRequired,
                         compression: COMPRESSION_TYPES,
