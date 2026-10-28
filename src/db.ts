@@ -31,6 +31,7 @@ export async function migrate(): Promise<void> {
             updated_at timestamptz NOT NULL DEFAULT now()
         )
     `;
+    await sql`ALTER TABLE backfill ADD COLUMN IF NOT EXISTS lanes jsonb`;
 }
 
 export interface Snapshot { data: unknown; id: number; version: number }

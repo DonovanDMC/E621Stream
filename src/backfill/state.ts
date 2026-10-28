@@ -2,14 +2,16 @@ import sql from "../db.ts";
 
 export type Status = "done" | "failed" | "pending" | "running" | "waiting";
 
+export interface Lane { cursor: number; lower: number }
+
 export interface BackfillState {
-    /** crawls walk ids from `ceiling` down to 0, for exports it's posts built so far out of the highest id */
     ceiling: number | null;
     cursor: number | null;
     detail: string | null;
     error: string | null;
     finished_at: Date | null;
     kind: "crawl" | "export";
+    lanes: Array<Lane> | null;
     source: string;
     started_at: Date | null;
     status: Status;
@@ -37,6 +39,11 @@ export async function listStates(): Promise<Array<BackfillState>> {
 export async function setState(source: string, kind: BackfillState["kind"], patch: Partial<Omit<BackfillState, "kind" | "source" | "updated_at">>): Promise<void> {
     await sql`INSERT INTO backfill (source, kind) VALUES (${source}, ${kind}) ON CONFLICT (source) DO NOTHING`;
     if (Object.keys(patch).length !== 0) await sql`UPDATE backfill SET ${sql(patch)}, updated_at = now() WHERE source = ${source}`;
+}
+
+// a string cast straight to jsonb gets stored as a json string
+export async function setLanes(source: string, lanes: Array<Lane>, patch: { cursor: number; stored: number }): Promise<void> {
+    await sql`UPDATE backfill SET lanes = ${JSON.stringify(lanes)}::text::jsonb, cursor = ${patch.cursor}, stored = ${patch.stored}, updated_at = now() WHERE source = ${source}`;
 }
 
 export async function resetState(source: string): Promise<void> {

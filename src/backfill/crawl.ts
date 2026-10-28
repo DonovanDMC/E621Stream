@@ -6,7 +6,7 @@ import { isPrivateSet, remember, TRACKED, type Item, type Tracked } from "../ing
 import { count } from "../metrics.ts";
 import redis from "../redis.ts";
 
-import { getState, setState } from "./state.ts";
+import { getState, setLanes, setState, type Lane } from "./state.ts";
 
 export interface Crawl {
     name: string;
@@ -27,14 +27,16 @@ export const CRAWLS: Array<Crawl> = [
 ];
 
 const LIMIT = 320;
+// the next page depends on the last one, so each lane only has one request out at a time
+const LANES = 2;
 
-/**
- * walks every record from `ceiling` down to the oldest, picking up where it left off. the ceiling is wherever the
- * create feed was when the crawl first started, the feed has been storing everything above it since, so the crawl
- * never goes back over records it's already getting
- *
- * resolves false if it can't start yet
- */
+export function split(top: number): Array<Lane> {
+    const size = Math.ceil(top / LANES);
+    return Array.from({ length: LANES }, (_, i) => ({ cursor: top - i * size, lower: Math.max(0, top - (i + 1) * size) })).filter(lane => lane.cursor > lane.lower);
+}
+
+const remaining = (lanes: Array<Lane>): number => lanes.reduce((total, lane) => total + Math.max(0, lane.cursor - lane.lower), 0);
+
 export async function crawl(source: Crawl): Promise<boolean> {
     const state = await getState(source.name);
     let ceiling = state?.ceiling ?? null;
@@ -47,20 +49,26 @@ export async function crawl(source: Crawl): Promise<boolean> {
         ceiling = Number(feed);
         await setState(source.name, "crawl", { ceiling, cursor: ceiling + 1 });
     }
-    let cursor = state?.cursor ?? ceiling + 1;
+    // crawls from before lanes were added only have `cursor`
+    const lanes = state?.lanes ?? split(state?.cursor ?? ceiling + 1);
     let stored = state?.stored ?? 0;
+    const save = (): Promise<void> => setLanes(source.name, lanes, { cursor: remaining(lanes), stored });
     await setState(source.name, "crawl", { status: "running", error: null, detail: null, started_at: state?.started_at ?? new Date() });
-    Debug("backfill", `${source.name}: crawling down from id ${cursor - 1}`);
-    for (;;) {
-        const items = await request(`backfill ${source.name}`, () => source.search({ limit: LIMIT, page: `b${cursor}` }), backfillQueue) ?? [];
-        count("requests.backfill");
-        if (items.length === 0) break;
-        const kept = source.private ? items.filter(item => !source.private!(item)) : items;
-        await remember(source.tracked, kept);
-        stored += kept.length;
-        cursor = Math.min(...items.map(item => item.id));
-        await setState(source.name, "crawl", { cursor, stored });
-    }
+    await save();
+    Debug("backfill", `${source.name}: crawling ${lanes.map(lane => `${lane.cursor - 1}..${lane.lower}`).join(", ")}`);
+
+    await Promise.all(lanes.map(async (lane) => {
+        while (lane.cursor > lane.lower) {
+            const items = await request(`backfill ${source.name}`, () => source.search({ limit: LIMIT, page: `b${lane.cursor}` }), backfillQueue) ?? [];
+            count("requests.backfill");
+            const mine = items.filter(item => item.id >= lane.lower);
+            const kept = source.private ? mine.filter(item => !source.private!(item)) : mine;
+            await remember(source.tracked, kept);
+            stored += kept.length;
+            lane.cursor = mine.length === items.length && items.length !== 0 ? Math.min(...items.map(item => item.id)) : lane.lower;
+            await save();
+        }
+    }));
     await setState(source.name, "crawl", { status: "done", cursor: 0, finished_at: new Date() });
     Debug("backfill", `${source.name}: done, ${stored} stored`);
     return true;
