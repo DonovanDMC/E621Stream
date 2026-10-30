@@ -52,6 +52,10 @@ Everything the ingester's account can see is rebroadcast publicly, so use an acc
 
 Requests to e621 start `E621_REQUEST_INTERVAL_MS` apart (default 550ms, just under e621's 2 req/s limit), with at most two in flight so a slow connection can't bunch them up. Every process reserves its starts against one shared clock in Redis, so the ingester, the gateways' credential checks (`E621_AUTH_REQUEST_INTERVAL_MS`, default 1000ms) and private event polling (`E621_PRIVATE_REQUEST_INTERVAL_MS`, default 1000ms) stay under the limit together. Private events are polled every `PRIVATE_POLL_INTERVAL_MS` (default a minute) per connected user, by one gateway at a time. A 429 is retried after its `Retry-After`, back in the queue like any other request.
 
+### Egress addresses
+
+e621 works through each address's requests one at a time, so a slow request holds up the next one from the same address. If the host has spare addresses, `ROLE=egress` runs a small proxy that only tunnels to e621's API, over `EGRESS_FAMILY` (default 6), and `E621_EGRESS_PROXIES` lists them (comma separated, like `http://egress-1:8080`). Each request then goes out whichever way has the least in flight, direct or through a proxy. The total rate doesn't change, the shared limiter still spaces every start out, it just spends less time waiting. Which address a proxy leaves from is up to its Docker network, for example with `com.docker.network.host_ipv6`. The status page shows how many requests went each way and how long they took.
+
 ### Backfill
 
 Update events need the previous state of a record to say what changed. The ingester fills in snapshots for everything from before it started, in the background, until it's caught up (`BACKFILL=false` turns this off):

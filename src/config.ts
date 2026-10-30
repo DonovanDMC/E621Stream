@@ -42,6 +42,8 @@ export const e621PrivateRequestIntervalMS = int("E621_PRIVATE_REQUEST_INTERVAL_M
 export const privatePollIntervalMS = int("PRIVATE_POLL_INTERVAL_MS", 60_000);
 export const backfillEnabled = bool("BACKFILL", true);
 export const disabledSources = new Set(list("DISABLED_SOURCES"));
+export const egressProxies = list("E621_EGRESS_PROXIES");
+export const egressFamily = int("EGRESS_FAMILY", 6) === 4 ? 4 : 6;
 export const pollIntervalScale = int("POLL_INTERVAL_SCALE", 1);
 export const idlePollScale = int("IDLE_POLL_SCALE", 10);
 

@@ -1,7 +1,7 @@
 import { accessSync, constants, createWriteStream, mkdirSync, readdirSync, rmSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
 
-import { e621BaseURL, logDir, logRetentionDays } from "./config.ts";
+import { e621BaseURL, egressProxies, logDir, logRetentionDays } from "./config.ts";
 import { count } from "./metrics.ts";
 
 class DailyLog {
@@ -53,24 +53,42 @@ function username(headers: Headers): string {
  * counts every request made to e621 for the status page, and logs them if there's a log, retries included since the
  * module calls fetch once per attempt
  */
+interface Route { inFlight: number; name: string; proxy: string | null }
+
+/** e621 works through each address's requests one at a time, so each request goes out the way with the least waiting */
+function pickRoute(routes: Array<Route>, turn: number): Route {
+    const least = Math.min(...routes.map(route => route.inFlight));
+    const free = routes.filter(route => route.inFlight === least);
+    return free[turn % free.length]!;
+}
+
 function watchRequests(role: string, log: DailyLog | null): void {
     const host = new URL(e621BaseURL).host;
     const original = globalThis.fetch;
+    const routes: Array<Route> = [
+        { name: "direct", proxy: null, inFlight: 0 },
+        ...egressProxies.map(proxy => ({ name: new URL(proxy).hostname.split(".")[0]!, proxy, inFlight: 0 })),
+    ];
+    let turn = 0;
     const logged = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
         const request = input instanceof Request ? input : null;
         const url = request?.url ?? (input instanceof URL ? input.href : input as string);
         if (new URL(url).host !== host) return original(input, init);
         const method = request?.method ?? init?.method ?? "GET";
         const user = username(request?.headers ?? new Headers(init?.headers));
+        const route = pickRoute(routes, turn++);
+        route.inFlight++;
         const start = performance.now();
         const line = (result: string): void => {
             const ms = Math.round(performance.now() - start);
             count(`request_ms.${role}`, ms);
-            log?.write(`${new Date().toISOString()} ${method} ${result} ${ms}ms ${url} ${user}\n`);
+            count(`route_ms.${route.name}`, ms);
+            log?.write(`${new Date().toISOString()} ${method} ${result} ${ms}ms ${url} ${user} via ${route.name}\n`);
         };
         count(`requests.${role}`);
+        count(`route.${route.name}`);
         try {
-            const res = await original(input, init);
+            const res = await original(input, route.proxy ? { ...init, proxy: route.proxy } as RequestInit : init);
             line(String(res.status));
             if (res.status === 429) count(`ratelimited.${role}`);
             if (res.status >= 400) count(`failed.${role}`);
@@ -79,6 +97,8 @@ function watchRequests(role: string, log: DailyLog | null): void {
             line(`failed (${String(err)})`);
             count(`failed.${role}`);
             throw err;
+        } finally {
+            route.inFlight--;
         }
     };
     globalThis.fetch = Object.assign(logged, { preconnect: original.preconnect.bind(original) });

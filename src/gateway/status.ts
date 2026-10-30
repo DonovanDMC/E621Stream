@@ -98,6 +98,7 @@ async function build(): Promise<Record<string, unknown>> {
     const feeds = Object.entries(feedHealth ?? {}).map(([name, health]) => ({ name, ...JSON.parse(health) as FeedHealth })).sort((a, b) => a.name.localeCompare(b.name));
     const hour = add(minutes.map(m => m.counts)), day = add(hours.map(h => h.counts));
     const byType = Object.entries(day).filter(([field]) => field.startsWith("events.")).map(([field, n]) => ({ type: field.slice(7), count: n })).sort((a, b) => b.count - a.count);
+    const routes = [...new Set(Object.keys(day).filter(field => field.startsWith("route.")).map(field => field.slice(6)))].sort();
     const roles = [...new Set(Object.keys(allTime).filter(field => field.startsWith("requests.")).map(field => field.slice(9)))].sort();
     const rate = (counts: Counts, role: string): Record<string, number | null> => ({
         requests: counts[`requests.${role}`] ?? 0,
@@ -118,6 +119,10 @@ async function build(): Promise<Record<string, unknown>> {
             failed: { last_hour: sum(hour, "failed"), last_24h: sum(day, "failed"), total: sum(allTime, "failed") },
             ratelimited: { last_hour: sum(hour, "ratelimited"), last_24h: sum(day, "ratelimited"), total: sum(allTime, "ratelimited") },
             by_role: Object.fromEntries(roles.map(role => [role, { last_hour: rate(hour, role), last_24h: rate(day, role), total: rate(allTime, role) }])),
+            by_route: Object.fromEntries(routes.map(route => [route, {
+                last_hour: { requests: hour[`route.${route}`] ?? 0, avg_ms: avgMs(hour[`route_ms.${route}`] ?? 0, hour[`route.${route}`] ?? 0) },
+                last_24h: { requests: day[`route.${route}`] ?? 0, avg_ms: avgMs(day[`route_ms.${route}`] ?? 0, day[`route.${route}`] ?? 0) },
+            }])),
             per_minute: minutes.map(m => ({ at: new Date(m.at).toISOString(), requests: requestsOf(m.counts), failed: sum(m.counts, "failed"), avg_ms: averageOf(m.counts) })),
         },
         events: {
@@ -191,7 +196,7 @@ export async function statusPage(): Promise<string> {
         gateway_commit: string;
         generated_at: string;
         ingester: { clients: number; commit: string | null; idle: boolean; idle_poll_scale: number; started_at: string | null };
-        requests: { avg_ms: Record<string, number | null>; by_role: Record<string, { last_24h: Record<string, number | null>; last_hour: Record<string, number | null> }>; failed: Counts; last_24h: number; last_hour: number; per_minute: Array<{ avg_ms: number | null; failed: number; requests: number }>; per_second_last_hour: number; ratelimited: Counts; total: number };
+        requests: { avg_ms: Record<string, number | null>; by_role: Record<string, { last_24h: Record<string, number | null>; last_hour: Record<string, number | null> }>; by_route: Record<string, { last_24h: { avg_ms: number | null; requests: number }; last_hour: { avg_ms: number | null; requests: number } }>; failed: Counts; last_24h: number; last_hour: number; per_minute: Array<{ avg_ms: number | null; failed: number; requests: number }>; per_second_last_hour: number; ratelimited: Counts; total: number };
     };
     const { backfill, events, feeds, requests } = data;
     const backfillDone = Array.isArray(backfill) && backfill.length !== 0 && backfill.every(b => b.status === "done");
@@ -215,6 +220,8 @@ export async function statusPage(): Promise<string> {
     const roleRows = Object.entries(requests.by_role).map(([role, r]) => `<tr><td>${esc(role)}</td>
         <td class="n">${num(r.last_hour.requests ?? 0)}</td><td class="n">${num(r.last_hour.failed ?? 0)}</td><td class="n">${ms(r.last_hour.avg_ms)}</td>
         <td class="n">${num(r.last_24h.requests ?? 0)}</td><td class="n">${num(r.last_24h.failed ?? 0)}</td><td class="n">${num(r.last_24h.ratelimited ?? 0)}</td><td class="n">${ms(r.last_24h.avg_ms)}</td></tr>`).join("");
+    const routeRows = Object.entries(requests.by_route).map(([route, r]) => `<tr><td>${esc(route)}</td>
+        <td class="n">${num(r.last_hour.requests)}</td><td class="n">${ms(r.last_hour.avg_ms)}</td><td class="n">${num(r.last_24h.requests)}</td><td class="n">${ms(r.last_24h.avg_ms)}</td></tr>`).join("");
     const typeRows = events.by_type_last_24h.map(t => `<tr><td>${esc(t.type)}</td><td class="n">${num(t.count)}</td></tr>`).join("");
 
     return `<!DOCTYPE html>
@@ -286,6 +293,10 @@ ${chart(requests.per_minute.map(m => m.avg_ms ?? 0), "ms average")}
 <tr><th>from</th><th>last hour</th><th>failed</th><th>avg time</th><th>last 24 hours</th><th>failed</th><th>rate limited</th><th>avg time</th></tr>
 ${roleRows}
 </table></div>
+${routeRows ? `<div class="table-wrap"><table>
+<tr><th>sent via</th><th>last hour</th><th>avg time</th><th>last 24 hours</th><th>avg time</th></tr>
+${routeRows}
+</table></div>` : ""}
 
 ${backfillDone ? "" : `<h2>Backfill</h2>
 <div class="table-wrap"><table>
