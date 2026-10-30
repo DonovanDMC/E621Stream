@@ -49,16 +49,21 @@ function username(headers: Headers): string {
     return atob(auth.slice(6)).split(":")[0] ?? "-";
 }
 
-/**
- * counts every request made to e621 for the status page, and logs them if there's a log, retries included since the
- * module calls fetch once per attempt
- */
-interface Route { inFlight: number; name: string; proxy: string | null }
+export interface Route {
+    downUntil: number;
+    inFlight: number;
+    name: string;
+    proxy: string | null;
+}
 
-/** e621 works through each address's requests one at a time, so each request goes out the way with the least waiting */
-function pickRoute(routes: Array<Route>, turn: number): Route {
-    const least = Math.min(...routes.map(route => route.inFlight));
-    const free = routes.filter(route => route.inFlight === least);
+const ROUTE_DOWN_MS = 30_000;
+
+// direct shares an ip with everything else on the server, so it's only used when no proxies are working
+export function pickRoute(routes: Array<Route>, turn: number, now = Date.now()): Route {
+    const proxies = routes.filter(route => route.proxy !== null && route.downUntil <= now);
+    if (proxies.length === 0) return routes.find(route => route.proxy === null)!;
+    const least = Math.min(...proxies.map(route => route.inFlight));
+    const free = proxies.filter(route => route.inFlight === least);
     return free[turn % free.length]!;
 }
 
@@ -66,8 +71,8 @@ function watchRequests(role: string, log: DailyLog | null): void {
     const host = new URL(e621BaseURL).host;
     const original = globalThis.fetch;
     const routes: Array<Route> = [
-        { name: "direct", proxy: null, inFlight: 0 },
-        ...egressProxies.map(proxy => ({ name: new URL(proxy).hostname.split(".")[0]!, proxy, inFlight: 0 })),
+        { name: "direct", proxy: null, inFlight: 0, downUntil: 0 },
+        ...egressProxies.map(proxy => ({ name: new URL(proxy).hostname.split(".")[0]!, proxy, inFlight: 0, downUntil: 0 })),
     ];
     let turn = 0;
     const logged = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -94,6 +99,7 @@ function watchRequests(role: string, log: DailyLog | null): void {
             if (res.status >= 400) count(`failed.${role}`);
             return res;
         } catch (err) {
+            if (route.proxy) route.downUntil = Date.now() + ROUTE_DOWN_MS;
             line(`failed (${String(err)})`);
             count(`failed.${role}`);
             throw err;
