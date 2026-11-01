@@ -21,9 +21,10 @@
     "build": "bun run scripts/build.ts",
     "build:pages": "bun run scripts/pages.ts",
     "backfill": "bun run src/backfill/index.ts",
+    "client-types": "bun run scripts/clientTypes.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "bun test",
+    "test": "bun test ./test/",
     "client": "bun run scripts/client.ts",
     "typecheck": "tsc --noEmit"
   },

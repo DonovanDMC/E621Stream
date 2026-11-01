@@ -11,6 +11,7 @@ export const NAV: Array<NavLink> = [
     { href: "/replaying/", page: "replaying", title: "Replaying" },
     { href: "/compression/", page: "compression", title: "Compression" },
     { href: "/close-codes/", page: "close-codes", title: "Close Codes" },
+    { href: "/clients/", page: "clients", title: "Clients" },
     { href: "/status", title: "Status" },
 ];
 

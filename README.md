@@ -1,19 +1,12 @@
 # E621Stream
 
-A semi-live WebSocket stream of e621 activity: uploads, post edits, tag changes, comments, forum posts, flags, approvals, deletions, new pools, sets, wiki pages, artists, users, bans, and more. e621 is polled every 5–120 seconds depending on the feed, and each change is pushed only to the consumers subscribed to it.
+A (mostly) live WebSocket stream of what's happening on e621. Uploads, edits, tag changes, comments, forum posts, flags, approvals, deletions, pools, sets, wiki pages, artists, users, bans, and a lot more.
 
-Public endpoint: `wss://e621.stream/ws`
+```
+wss://e621.stream/ws
+```
 
-Documentation: https://e621.stream (built from [`pages/`](./pages))
-
-## Connecting
-
-1. Open a WebSocket to `/ws`. You can add `?compress=zlib-stream` or `?compress=zstd-stream` (see [Compression](https://e621.stream/compression/)).
-2. The server sends `hello`.
-3. Within 10 seconds, send `identify` with your e621 credentials and subscriptions.
-4. The server replies with `ready`, then sends `dispatch` events.
-
-Every message is a JSON object with an `op`. Most also carry a `d` payload.
+See https://e621.stream for the protocol, events, filters, replaying, compression & close codes (built from [`pages/`](./pages)). There's a client for [TypeScript](./clients/typescript).
 
 ```js
 const ws = new WebSocket("wss://e621.stream/ws");

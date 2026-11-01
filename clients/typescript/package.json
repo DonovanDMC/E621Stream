@@ -1,0 +1,51 @@
+{
+  "name": "e621stream",
+  "version": "0.0.0",
+  "description": "A client for E621Stream, a live WebSocket stream of e621 activity",
+  "license": "MIT",
+  "author": "Donovan_DMC <hewwo@yiff.rocks>",
+  "type": "module",
+  "packageManager": "pnpm@11.3.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DonovanDMC/E621Stream"
+  },
+  "homepage": "https://github.com/DonovanDMC/E621Stream#readme",
+  "bugs": {
+    "url": "https://github.com/DonovanDMC/E621Stream/issues"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "bun test",
+    "prepublishOnly": "pnpm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@types/bun": "^1.4.4",
+    "@uwu-codes/eslint-config": "^2.0.8",
+    "eslint": "^9.39.4",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-unicorn": "^59.0.1",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "globals": "^16.5.0",
+    "jiti": "^2.6.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.57.1"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "package.json",
+    "tsconfig.json"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

@@ -1,0 +1,101 @@
+import { describe, expect, test } from "bun:test";
+
+import { CloseCodes, E621Stream, type StreamEvent } from "../lib/index.ts";
+
+class FakeSocket extends EventTarget {
+    static sockets: Array<FakeSocket> = [];
+    readyState = 0;
+    sent: Array<{ d?: Record<string, unknown>; op: string }> = [];
+
+    constructor(readonly url: string) {
+        super();
+        FakeSocket.sockets.push(this);
+        queueMicrotask(() => {
+            this.readyState = 1;
+            this.dispatchEvent(new Event("open"));
+            this.receive({ op: "hello", d: { version: 1 } });
+        });
+    }
+
+    close(code = 1000, reason = ""): void {
+        this.readyState = 3;
+        this.dispatchEvent(Object.assign(new Event("close"), { code, reason }));
+    }
+
+    receive(payload: object): void {
+        this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(payload) }));
+    }
+
+    send(data: string): void {
+        this.sent.push(JSON.parse(data) as { d?: Record<string, unknown>; op: string });
+    }
+}
+
+const tick = (ms = 0): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+function stream(options: Partial<ConstructorParameters<typeof E621Stream>[0]> = {}): E621Stream {
+    FakeSocket.sockets = [];
+    return new E621Stream({ auth: { username: "someone", apiKey: "key" }, subscriptions: ["post.create"], WebSocket: FakeSocket as unknown as typeof WebSocket, ...options });
+}
+const dispatch = (id: string, type = "post.create", extra = {}): object => ({ op: "dispatch", id, type, time: "2026-11-09T00:00:00Z", data: { post: { id: 1 } }, ...extra });
+
+describe("E621Stream", () => {
+    test("identifies with its credentials and subscriptions", async () => {
+        stream({ client: "tests" }).connect();
+        await tick();
+        expect(FakeSocket.sockets[0]!.sent[0]).toEqual({ op: "identify", d: { auth: { username: "someone", api_key: "key" }, client: "tests", subscriptions: ["post.create"] } });
+    });
+
+    test("sends events to dispatch and their type's listeners", async () => {
+        const client = stream().connect();
+        const all: Array<string> = [], posts: Array<StreamEvent<"post.create">> = [];
+        client.on("dispatch", event => all.push(event.id)).on("post.create", event => posts.push(event));
+        await tick();
+        FakeSocket.sockets[0]!.receive(dispatch("1-0"));
+        FakeSocket.sockets[0]!.receive(dispatch("2-0", "comment.create"));
+        expect(all).toEqual(["1-0", "2-0"]);
+        expect(posts.map(event => event.data.post.id)).toEqual([1]);
+        expect(client.cursor).toBe("2-0");
+    });
+
+    test("private events don't move the cursor", async () => {
+        const client = stream().connect();
+        await tick();
+        FakeSocket.sockets[0]!.receive(dispatch("1-0"));
+        FakeSocket.sockets[0]!.receive(dispatch("dmail.create:5", "dmail.create", { private: true }));
+        expect(client.cursor).toBe("1-0");
+    });
+
+    test("reconnects and resumes from the last event", async () => {
+        const client = stream().connect();
+        const reconnecting: Array<number> = [];
+        client.on("reconnecting", ({ attempt }) => reconnecting.push(attempt));
+        await tick();
+        FakeSocket.sockets[0]!.receive(dispatch("7-0"));
+        FakeSocket.sockets[0]!.close(1006);
+        expect(reconnecting).toEqual([1]);
+        await tick(1300);
+        expect(FakeSocket.sockets).toHaveLength(2);
+        expect(FakeSocket.sockets[1]!.sent[0]!.d!.cursor).toBe("7-0");
+        client.close();
+    });
+
+    test("doesn't reconnect after a close retrying won't fix", async () => {
+        const client = stream().connect();
+        const errors: Array<number> = [], closes: Array<boolean> = [];
+        client.on("error", err => errors.push((err as unknown as { code: number }).code)).on("close", ({ reconnecting }) => closes.push(reconnecting));
+        await tick();
+        FakeSocket.sockets[0]!.receive({ op: "error", d: { code: CloseCodes.AUTHENTICATION_FAILED, message: "invalid credentials" } });
+        FakeSocket.sockets[0]!.close(CloseCodes.AUTHENTICATION_FAILED);
+        expect(errors).toEqual([CloseCodes.AUTHENTICATION_FAILED]);
+        expect(closes).toEqual([false]);
+    });
+
+    test("subscribe sends the change and keeps it for reconnecting", async () => {
+        const client = stream().connect();
+        await tick();
+        client.subscribe(["comment.*"]);
+        expect(FakeSocket.sockets[0]!.sent.at(-1)).toEqual({ op: "subscribe", d: { subscriptions: ["comment.*"] } });
+        expect(client.options.subscriptions).toEqual(["comment.*"]);
+        client.close();
+    });
+});

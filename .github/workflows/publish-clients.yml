@@ -1,0 +1,30 @@
+name: Publish Clients
+permissions:
+    contents: read
+    id-token: write
+on:
+    workflow_dispatch:
+
+jobs:
+    checks:
+        uses: ./.github/workflows/clients.yml
+    typescript:
+        needs: [checks]
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: clients/typescript
+        steps:
+            - uses: actions/checkout@v6
+            - uses: pnpm/action-setup@v4
+              with:
+                  package_json_file: clients/typescript/package.json
+                  standalone: true
+            - uses: actions/setup-node@v4
+              with:
+                  node-version-file: clients/typescript/.node-version
+                  registry-url: https://registry.npmjs.org/
+            - name: Update NPM # Needed for OIDC
+              run: npm i -g npm@"^11.5"
+            - run: pnpm i --frozen-lockfile --ignore-scripts
+            - run: pnpm publish --no-git-checks
