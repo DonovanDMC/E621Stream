@@ -49,6 +49,16 @@ jobs:
                   ruby-version: .ruby-version
                   working-directory: clients/ruby
                   bundler-cache: true
-            - uses: rubygems/configure-rubygems-credentials@v1.0.0
+            # trusted publishing only creates a new gem when the workflow says which account owns it, and
+            # rubygems/configure-rubygems-credentials can't pass that yet, so the token is exchanged here
+            - name: Get a RubyGems API key
+              run: |
+                  jwt=$(curl -sS --fail-with-body -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=rubygems.org" | jq -r .value)
+                  echo "::add-mask::$jwt"
+                  key=$(curl -sS --fail-with-body -X POST https://rubygems.org/api/v1/oidc/trusted_publisher/exchange_token -H "Content-Type: application/json" -d "$(jq -n --arg jwt "$jwt" --arg owner "$OWNER" '{jwt: $jwt, owner: $owner}')" | jq -r .rubygems_api_key)
+                  echo "::add-mask::$key"
+                  echo "GEM_HOST_API_KEY=$key" >> "$GITHUB_ENV"
+              env:
+                  OWNER: Donovan_DMC
             - run: gem build e621stream.gemspec
             - run: gem push e621stream-*.gem
