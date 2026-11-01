@@ -4,11 +4,18 @@ permissions:
     id-token: write
 on:
     workflow_dispatch:
+        inputs:
+            client:
+                description: Which client to publish
+                type: choice
+                options: [typescript, ruby, both]
+                default: both
 
 jobs:
     checks:
         uses: ./.github/workflows/clients.yml
     typescript:
+        if: inputs.client != 'ruby'
         needs: [checks]
         runs-on: ubuntu-latest
         defaults:
@@ -28,3 +35,20 @@ jobs:
               run: npm i -g npm@"^11.5"
             - run: pnpm i --frozen-lockfile --ignore-scripts
             - run: pnpm publish --no-git-checks
+    ruby:
+        if: inputs.client != 'typescript'
+        needs: [checks]
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: clients/ruby
+        steps:
+            - uses: actions/checkout@v6
+            - uses: ruby/setup-ruby@v1
+              with:
+                  ruby-version: .ruby-version
+                  working-directory: clients/ruby
+                  bundler-cache: true
+            - uses: rubygems/configure-rubygems-credentials@v1.0.0
+            - run: gem build e621stream.gemspec
+            - run: gem push e621stream-*.gem

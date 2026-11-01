@@ -1,0 +1,29 @@
+# frozen_string_literal: true
+# typed: strict
+
+module E621Stream
+  module Events
+    # Kept identical to the server's src/events.ts, the repository's tests check it.
+    EVENT_TYPES = %w[
+      artist.create artist.delete artist.update artist_url.create artist_version.create avoid_posting.create
+      avoid_posting.delete avoid_posting.destroy avoid_posting.undelete avoid_posting.update
+      avoid_posting_version.create ban.create ban.delete ban.update blip.create bulk_update_request.create
+      bulk_update_request.update comment.create comment.delete comment.hide comment.unhide comment.update
+      forum_post.create forum_post.delete forum_post.hide forum_post.unhide forum_post.update forum_topic.create
+      forum_topic.delete forum_topic.hide forum_topic.unhide forum_topic.update help_page.create help_page.update
+      mod_action.create news_update.create news_update.update note.create note.update note_version.create
+      pool.add_posts pool.create pool.delete pool.remove_posts pool.update pool_version.create post.create post.update
+      post_approval.create post_event.create post_flag.create post_flag.update post_replacement.create
+      post_set.add_posts post_set.create post_set.delete post_set.remove_posts post_set.update post_version.create
+      post_version.hide post_version.unhide tag.create tag.delete tag.update tag_alias.create tag_alias.update
+      tag_implication.create tag_implication.update tag_type_version.create takedown.create takedown.delete
+      takedown.update upload_karma_event.create user.create user.delete user.update user_feedback.create
+      user_feedback.delete user_feedback.destroy user_feedback.undelete user_feedback.update wiki_page.create
+      wiki_page.delete wiki_page.update wiki_page_version.create
+    ].freeze
+
+    # Polled with your own credentials and only sent to you. They have to be subscribed to by name, `*` doesn't include
+    # them.
+    PRIVATE_EVENT_TYPES = %w[dmail.create].freeze
+  end
+end

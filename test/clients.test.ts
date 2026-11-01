@@ -24,4 +24,11 @@ describe("clients", () => {
         // bun run client-types
         expect(keys).toEqual([...EVENT_TYPES, ...PRIVATE_EVENT_TYPES]);
     });
+
+    test("the ruby client has every event type", async () => {
+        const source = await read("clients/ruby/lib/e621stream/events.rb");
+        const words = (name: string): Array<string> => between(source, `${name} = %w[`, "]").slice(`${name} = %w[`.length).split(/\s+/).filter(Boolean);
+        expect(words("EVENT_TYPES")).toEqual([...EVENT_TYPES]);
+        expect(words("PRIVATE_EVENT_TYPES")).toEqual([...PRIVATE_EVENT_TYPES]);
+    });
 });

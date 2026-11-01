@@ -6,7 +6,7 @@ A (mostly) live WebSocket stream of what's happening on e621. Uploads, edits, ta
 wss://e621.stream/ws
 ```
 
-See https://e621.stream for the protocol, events, filters, replaying, compression & close codes (built from [`pages/`](./pages)). There's a client for [TypeScript](./clients/typescript).
+See https://e621.stream for the protocol, events, filters, replaying, compression & close codes (built from [`pages/`](./pages)). There's clients for [TypeScript](./clients/typescript) and [Ruby](./clients/ruby).
 
 ```js
 const ws = new WebSocket("wss://e621.stream/ws");
