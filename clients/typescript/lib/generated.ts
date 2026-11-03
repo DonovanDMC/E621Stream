@@ -825,6 +825,8 @@ export interface EventDataMap {
     "post_flag.create": PostFlag;
     "post_flag.update": Update<"post_flag", PostFlag, "is_resolved">;
     "post_replacement.create": PostReplacement;
+    "post_replacement.destroy": { post_event: PostEvent; post_replacement: Pick<PostReplacement, "id" | "status" | "approver_id" | "reason" | "post_id"> };
+    "post_replacement.update": Update<"post_replacement", PostReplacement, "status" | "approver_id" | "reason" | "post_id">;
     "post_set.add_posts": Record<"post_set", PostSet> & { post_ids: Array<number> };
     "post_set.create": PostSet;
     "post_set.delete": ModAction<"set_delete">;

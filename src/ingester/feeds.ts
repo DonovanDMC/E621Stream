@@ -5,6 +5,7 @@ import { e621, request } from "../e621.ts";
 import { MOD_ACTION_EVENTS, publish, type EventType } from "../events.ts";
 import redis from "../redis.ts";
 
+import { checkReplacements } from "./replacements.ts";
 import { isPrivateSet, remember, TRACKED, type Tracked } from "./updates.ts";
 
 interface Page { limit: number; page: `${"a" | "b"}${number}` }
@@ -14,6 +15,7 @@ export interface FeedSource {
     intervalMS: number;
     name: string;
     tracked?: Tracked;
+    after?(item: Item): Promise<number>;
     derive?(item: Item): EventType | undefined | Promise<EventType | undefined>;
     expand?(item: Item): Array<{ data: unknown; type: EventType }>;
     private?(item: Item): boolean;
@@ -59,12 +61,12 @@ function poolMembers(item: Item): Array<{ data: unknown; type: EventType }> {
 
 export const FEEDS: Array<FeedSource> = [
     { name: "post_versions", event: "post_version.create", intervalMS: 8000, search: page => e621.postVersions.search(page) },
-    { name: "post_events", event: "post_event.create", intervalMS: 8000, search: page => e621.postEvents.search(page) },
+    { name: "post_events", event: "post_event.create", intervalMS: 8000, search: page => e621.postEvents.search(page), after: checkReplacements },
     { name: "comments", event: "comment.create", intervalMS: 8000, search: page => e621.comments.search({ ...page, group_by: "comment" }), tracked: TRACKED.comment },
     { name: "forum_posts", event: "forum_post.create", intervalMS: 15_000, search: page => e621.forumPosts.search(page), tracked: TRACKED.forumPost },
     { name: "forum_topics", event: "forum_topic.create", intervalMS: 20_000, search: page => e621.forumTopics.search(page), tracked: TRACKED.forumTopic },
     { name: "post_flags", event: "post_flag.create", intervalMS: 20_000, search: page => e621.postFlags.search(page), tracked: TRACKED.postFlag },
-    { name: "post_replacements", event: "post_replacement.create", intervalMS: 20_000, search: page => e621.postReplacements.search(page) },
+    { name: "post_replacements", event: "post_replacement.create", intervalMS: 20_000, search: page => e621.postReplacements.search(page), tracked: TRACKED.postReplacement },
     { name: "note_versions", event: "note_version.create", intervalMS: 20_000, search: page => e621.noteVersions.search(page), derive: laterVersion("note.update") },
     { name: "pool_versions", event: "pool_version.create", intervalMS: 20_000, search: page => e621.poolVersions.search(page), derive: laterVersion("pool.update"), expand: poolMembers },
     { name: "mod_actions", event: "mod_action.create", intervalMS: 15_000, search: page => e621.modActions.search(page), derive: item => MOD_ACTION_EVENTS[(item as { action?: string }).action ?? ""] },
@@ -153,6 +155,10 @@ export class Feed {
                 if (this.source.tracked) await remember(this.source.tracked, [item]);
                 this.seen.add(item.id);
                 published++;
+                if (this.source.after) published += await this.source.after(item).catch((err: unknown) => {
+                    Debug(`ingester:${this.source.name}`, `follow-up for ${item.id} failed: ${String(err)}`);
+                    return 0;
+                });
             }
             const max = items.at(-1)?.id ?? cursor;
             if (max > cursor) {

@@ -56,6 +56,8 @@ export const EVENT_TYPES = [
     "post_flag.create",
     "post_flag.update",
     "post_replacement.create",
+    "post_replacement.destroy",
+    "post_replacement.update",
     "post_set.add_posts",
     "post_set.create",
     "post_set.delete",

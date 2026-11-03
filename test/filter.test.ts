@@ -151,6 +151,13 @@ describe("id filters", () => {
         expect(() => compile({ type: "dmail.create", filter: { user_ids: [1] } })).toThrow(FilterError);
     });
 
+    test("replacement destroys filter by the post and who deleted it", () => {
+        const destroyed = event("post_replacement.destroy", { post_replacement: { id: 9, post_id: 100, status: "rejected", approver_id: null }, post_event: { id: 1, post_id: 100, action: "replacement_deleted", creator_id: 4 } });
+        expect(matches(compile({ type: "post_replacement.*", filter: { post_ids: [100] } }), destroyed)).toBe(true);
+        expect(matches(compile({ type: "post_replacement.destroy", filter: { user_ids: [4] } }), destroyed)).toBe(true);
+        expect(matches(compile({ type: "post_replacement.destroy", filter: { post_ids: [101] } }), destroyed)).toBe(false);
+    });
+
     test("bad ids are rejected", () => {
         expect(() => compile({ type: "*", filter: { post_ids: ["1"] } })).toThrow(FilterError);
     });

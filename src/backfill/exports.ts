@@ -6,7 +6,7 @@ import sql from "../db.ts";
 
 import { setState } from "./state.ts";
 
-type ExportName = "bulk_update_requests" | "pools" | "posts" | "tag_aliases" | "tag_implications" | "tags";
+type ExportName = "bulk_update_requests" | "pools" | "post_replacements" | "posts" | "tag_aliases" | "tag_implications" | "tags";
 
 const downloader = new E621ExportDownloader();
 const POST_BATCH = 250_000;
@@ -69,6 +69,7 @@ const REQUESTS = {
     tag_aliases: { resource: "tag_alias", fields: tagRequest },
     tag_implications: { resource: "tag_implication", fields: tagRequest },
     bulk_update_requests: { resource: "bulk_update_request", fields: [text("status"), text("title"), text("script"), int("approver_id"), int("forum_topic_id")] },
+    post_replacements: { resource: "post_replacement", fields: [text("status"), int("approver_id"), text("reason"), int("post_id")] },
 } satisfies Record<string, { fields: Array<Field>; resource: string }>;
 
 export async function importRequests(name: keyof typeof REQUESTS): Promise<void> {

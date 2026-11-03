@@ -53,7 +53,7 @@ e621 works through each address's requests one at a time, so a slow request hold
 
 Update events need the previous state of a record to say what changed. The ingester fills in snapshots for everything from before it started, in the background, until it's caught up (`BACKFILL=false` turns this off):
 
-- Posts, tag aliases, tag implications and BURs come from e621's [daily DB exports](https://e621.net/db_exports), imported with `psql` through [e621-export-downloader](https://www.npmjs.com/package/e621-export-downloader). These don't use the API. The posts export is about 2GB compressed and several times that once unpacked, in the container's temp directory, while it's imported.
+- Posts, tag aliases, tag implications, BURs and post replacements come from e621's [daily DB exports](https://e621.net/db_exports), imported with `psql` through [e621-export-downloader](https://www.npmjs.com/package/e621-export-downloader). These don't use the API. The posts export is about 2GB compressed and several times that once unpacked, in the container's temp directory, while it's imported.
 - Comments, forum posts and topics, post sets, flags, takedowns and news updates are crawled through the API, newest first. Crawls only get the request slots the ingester's polling leaves spare, so live events are never slowed down. Each crawl starts from wherever its live feed was when the crawl began, since the feed stores everything after that itself.
 
 Snapshots are versioned (`change_seq` for posts, `updated_at` otherwise), so an older copy never replaces a newer one, and the backfill is safe to restart or rerun. A field an export doesn't have is left out of the snapshot, and the record's next update fills it in instead of reporting it as a change.

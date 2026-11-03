@@ -43,6 +43,7 @@ export const TRACKED = {
     postFlag: { resource: "post_flag", fields: ["is_resolved"] },
     postSet: { resource: "post_set", fields: ["name", "shortname", "description", "is_public", "transfer_on_delete"], members: { field: "post_ids", added: "post_set.add_posts", removed: "post_set.remove_posts" } },
     newsUpdate: { resource: "news_update", fields: ["message"] },
+    postReplacement: { resource: "post_replacement", fields: ["status", "approver_id", "reason", "post_id"] },
 } satisfies Record<string, Tracked>;
 
 const LIMIT = 320;
@@ -74,9 +75,9 @@ export const UPDATES: Array<UpdateSource> = [
     { ...TRACKED.tagImplication, name: "tag_implication_updates", event: "tag_implication.update", mode: "ordered", pages: 5, intervalMS: 60_000, unknownChanges: true, search: o => e621.tagImplications.search({ ...o, order: "updated_at" }) },
     { ...TRACKED.bulkUpdateRequest, name: "bulk_update_request_updates", event: "bulk_update_request.update", mode: "ordered", pages: 5, intervalMS: 60_000, unknownChanges: true, search: o => e621.bulkUpdateRequests.search({ ...o, order: "updated_at_desc" }) },
     { ...TRACKED.postSet, name: "post_set_updates", event: "post_set.update", mode: "ordered", pages: 5, intervalMS: 60_000, unknownChanges: false, private: isPrivateSet, search: o => e621.postSets.search({ ...o, order: "updated_at" }) },
-    // these can't be ordered by updated_at either
     { ...TRACKED.postFlag, name: "post_flag_updates", event: "post_flag.update", mode: "window", pages: 1, intervalMS: 60_000, unknownChanges: false, search: o => e621.postFlags.search(o) },
     { ...TRACKED.takedown, name: "takedown_updates", event: "takedown.update", mode: "window", pages: 1, intervalMS: 60_000, unknownChanges: false, search: o => e621.takedowns.search(o) },
+    { ...TRACKED.postReplacement, name: "post_replacement_updates", event: "post_replacement.update", mode: "window", pages: 1, intervalMS: 60_000, unknownChanges: false, search: o => e621.postReplacements.search(o) },
     { ...TRACKED.newsUpdate, name: "news_update_updates", event: "news_update.update", mode: "window", pages: 1, intervalMS: 120_000, unknownChanges: false, search: o => e621.newsUpdates.search(o) },
     { ...TRACKED.helpPage, name: "help_pages", event: "help_page.update", createEvent: "help_page.create", mode: "window", pages: 1, intervalMS: 120_000, unknownChanges: false, search: () => e621.helpPages.list() },
 ];
@@ -122,41 +123,6 @@ export class UpdateFeed {
         const order = new Map(ids.map((id, i) => [id, i]));
         items.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
         return { items, full: ids.length === LIMIT };
-    }
-
-    private async handle(all: Array<Item>, emitUnknown: boolean): Promise<number> {
-        const items = this.source.private ? all.filter(item => !this.source.private!(item)) : all;
-        if (items.length === 0) return 0;
-        const { members, resource } = this.source;
-        const previous = await getSnapshots(resource, items.map(item => item.id));
-        const writes: Array<Snapshot> = [];
-        let published = 0;
-        for (const item of items) {
-            const after = pick(this.source, item);
-            const before = previous.get(item.id) ?? null;
-            const changes = before ? diff(before, after, members?.field) : null;
-            const moved = before && members && members.field in before ? membership(before[members.field], after[members.field]) : null;
-            const movedAny = moved !== null && (moved.added.length !== 0 || moved.removed.length !== 0);
-            if (!changes || Object.keys(changes).length !== 0 || movedAny) writes.push({ id: item.id, version: versionOf(item), data: after });
-            const time = item.updated_at ?? new Date().toISOString();
-            if (members && moved) {
-                if (moved.added.length !== 0) await publish(members.added, time, { [resource]: item, post_ids: moved.added });
-                if (moved.removed.length !== 0) await publish(members.removed, time, { [resource]: item, post_ids: moved.removed });
-                published += Number(moved.added.length !== 0) + Number(moved.removed.length !== 0);
-            }
-            if (changes) {
-                if (Object.keys(changes).length === 0) continue;
-                await publish(this.source.event, time, { [resource]: item, changes });
-                published++;
-            } else if (emitUnknown) {
-                const created = Date.parse(item.created_at ?? ""), updated = Date.parse(time);
-                if (Number.isNaN(created) || updated - created <= CREATION_SLACK_MS) continue;
-                await publish(this.source.event, time, { [resource]: item, changes: null });
-                published++;
-            }
-        }
-        await putSnapshots(resource, writes);
-        return published;
     }
 
     private async pollOrdered(): Promise<number> {
@@ -240,6 +206,41 @@ export class UpdateFeed {
             await redis.hset(cursorKey, field, String(newest));
         }
         return { count: ids.size, ids };
+    }
+
+    async handle(all: Array<Item>, emitUnknown: boolean): Promise<number> {
+        const items = this.source.private ? all.filter(item => !this.source.private!(item)) : all;
+        if (items.length === 0) return 0;
+        const { members, resource } = this.source;
+        const previous = await getSnapshots(resource, items.map(item => item.id));
+        const writes: Array<Snapshot> = [];
+        let published = 0;
+        for (const item of items) {
+            const after = pick(this.source, item);
+            const before = previous.get(item.id) ?? null;
+            const changes = before ? diff(before, after, members?.field) : null;
+            const moved = before && members && members.field in before ? membership(before[members.field], after[members.field]) : null;
+            const movedAny = moved !== null && (moved.added.length !== 0 || moved.removed.length !== 0);
+            if (!changes || Object.keys(changes).length !== 0 || movedAny) writes.push({ id: item.id, version: versionOf(item), data: after });
+            const time = item.updated_at ?? new Date().toISOString();
+            if (members && moved) {
+                if (moved.added.length !== 0) await publish(members.added, time, { [resource]: item, post_ids: moved.added });
+                if (moved.removed.length !== 0) await publish(members.removed, time, { [resource]: item, post_ids: moved.removed });
+                published += Number(moved.added.length !== 0) + Number(moved.removed.length !== 0);
+            }
+            if (changes) {
+                if (Object.keys(changes).length === 0) continue;
+                await publish(this.source.event, time, { [resource]: item, changes });
+                published++;
+            } else if (emitUnknown) {
+                const created = Date.parse(item.created_at ?? ""), updated = Date.parse(time);
+                if (Number.isNaN(created) || updated - created <= CREATION_SLACK_MS) continue;
+                await publish(this.source.event, time, { [resource]: item, changes: null });
+                published++;
+            }
+        }
+        await putSnapshots(resource, writes);
+        return published;
     }
 
     poll(): Promise<number> {

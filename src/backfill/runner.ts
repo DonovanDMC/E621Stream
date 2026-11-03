@@ -14,6 +14,7 @@ export const EXPORTS: Array<Source> = [
     { kind: "export", name: "tag_aliases", run: () => importRequests("tag_aliases").then(() => true) },
     { kind: "export", name: "tag_implications", run: () => importRequests("tag_implications").then(() => true) },
     { kind: "export", name: "bulk_update_requests", run: () => importRequests("bulk_update_requests").then(() => true) },
+    { kind: "export", name: "post_replacements", run: () => importRequests("post_replacements").then(() => true) },
     { kind: "export", name: "posts", run: () => importPosts().then(() => true) },
 ];
 export const CRAWL_SOURCES: Array<Source> = CRAWLS.map(source => ({ kind: "crawl", name: source.name, run: () => crawl(source) }));

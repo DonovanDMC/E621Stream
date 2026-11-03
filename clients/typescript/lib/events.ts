@@ -56,6 +56,8 @@ export const EVENT_TYPES = [
     "post_flag.create",
     "post_flag.update",
     "post_replacement.create",
+    "post_replacement.destroy",
+    "post_replacement.update",
     "post_set.add_posts",
     "post_set.create",
     "post_set.delete",
@@ -94,7 +96,9 @@ export type EventType = typeof EVENT_TYPES[number];
 
 /** Polled with your own credentials, these need to be subscribed to by name. */
 
-export const PRIVATE_EVENT_TYPES = ["dmail.create"] as const;
+export const PRIVATE_EVENT_TYPES = [
+    "dmail.create",
+] as const;
 
 export type PrivateEventType = typeof PRIVATE_EVENT_TYPES[number];
 
@@ -129,8 +133,14 @@ export const MOD_ACTION_EVENT_TYPES = [
     "wiki_page.delete",
 ] as const;
 
-
-export const VERSION_EVENT_TYPES = ["artist.update", "avoid_posting.update", "note.update", "pool.update", "tag.update", "wiki_page.update"] as const;
+export const VERSION_EVENT_TYPES = [
+    "artist.update",
+    "avoid_posting.update",
+    "note.update",
+    "pool.update",
+    "tag.update",
+    "wiki_page.update",
+] as const;
 
 export type ModActionEventType = typeof MOD_ACTION_EVENT_TYPES[number];
 export type VersionEventType = typeof VERSION_EVENT_TYPES[number];

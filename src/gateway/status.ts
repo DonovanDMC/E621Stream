@@ -29,6 +29,7 @@ const MODELS = [
     { resource: "post_set", label: "Post sets", newest: "post_sets", feeds: ["post_sets", "post_set_updates"] },
     { resource: "post_flag", label: "Post flags", newest: "post_flags", feeds: ["post_flags", "post_flag_updates"] },
     { resource: "takedown", label: "Takedowns", newest: "takedowns", feeds: ["takedowns", "takedown_updates"] },
+    { resource: "post_replacement", label: "Post replacements", newest: "post_replacements", feeds: ["post_replacements", "post_replacement_updates"] },
     { resource: "tag_alias", label: "Tag aliases", newest: "tag_aliases", feeds: ["tag_aliases", "tag_alias_updates"] },
     { resource: "tag_implication", label: "Tag implications", newest: "tag_implications", feeds: ["tag_implications", "tag_implication_updates"] },
     { resource: "bulk_update_request", label: "Bulk update requests", newest: "bulk_update_requests", feeds: ["bulk_update_requests", "bulk_update_request_updates"] },

@@ -150,6 +150,10 @@ function facetsOf(event: StreamEvent): Facets {
             const set = (d.post_set ?? {}) as Record<string, unknown>;
             return { postIds: d.post_ids as Array<number>, setIds: ints(set.id), userIds: ints(set.creator_id) };
         }
+        case "post_replacement.destroy": {
+            const replacement = (d.post_replacement ?? {}) as Record<string, unknown>, event = (d.post_event ?? {}) as Record<string, unknown>;
+            return { postIds: ints(replacement.post_id), userIds: ints(replacement.approver_id, event.creator_id) };
+        }
         case "user.create":
             return { userIds: ints(d.id) };
         case "forum_topic.create":

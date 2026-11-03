@@ -3,6 +3,7 @@
 - [Event Types](#event-types)
 - [Update Events](#update-events)
 - [Pool and Set Posts](#pool-and-set-posts)
+- [Replacements](#replacements)
 - [Mod Action Events](#mod-action-events)
 - [Private Events](#private-events)
 
@@ -23,6 +24,7 @@
 | `user.update`, `user.delete` | mod action, see [Mod Action Events](#mod-action-events) |
 | `mod_action.create` | |
 | `*.update` | see [Update events](#update-events) |
+| `post_replacement.destroy` | `{ post_replacement, post_event }`, see [Replacements](#replacements) |
 | `pool.add_posts`, `pool.remove_posts`, `post_set.add_posts`, `post_set.remove_posts` | see [Pool and set posts](#pool-and-set-posts) |
 | `*.hide`, `*.unhide`, `*.delete`, `*.undelete`, `*.destroy` | mod action, see [Mod action events](#mod-action-events) |
 
@@ -41,41 +43,48 @@ Updates come from one of three places, depending on what e621 offers for the res
 | `wiki_page.update` | `wiki_page_version.create` |
 | `artist.update` | `artist_version.create` |
 | `avoid_posting.update` | `avoid_posting_version.create` |
-| `tag.update` | `tag_type_version.create` (category and lock changes) |
+| `tag.update` | `tag_type_version.create` (category & lock changes) |
 
-**From snapshots.** Everything else is compared against the last state the stream saw. These wrap the record under its resource name, e.g. `{ comment, changes }` or `{ tag_alias, changes }`. `changes` maps each changed field to `{ old, new }`, and filters apply to the wrapped record. An update fires only when one of these fields changes:
+### From snapshots
+Everything else is compared against the last copy we saw. `data` is `{ <resource>, changes }` (e.g. `{ comment, changes }`), with `{ old, new }` for each changed field. It's only sent when one of these fields changes:
 
-| event | tracked fields | how it's found |
+| event | fields | how |
 |---|---|---|
-| `comment.update` | `body`, `is_hidden`, `is_sticky`, `warning_type`, `warning_user_id` | polled by `updated_at` every 30 seconds |
-| `forum_post.update` | `body`, `is_hidden`, `warning_type`, `warning_user_id` | the newest 320 forum posts are rescanned every 30 seconds |
-| `forum_topic.update` | `title`, `category_id`, `is_hidden`, `is_locked`, `is_sticky` | polled by `updated_at` every 30 seconds; reply bumps don't count |
-| `tag_alias.update`, `tag_implication.update` | `status`, `antecedent_name`, `consequent_name`, `reason`, `approver_id`, `forum_topic_id` | polled by `updated_at` every minute |
-| `bulk_update_request.update` | `status`, `title`, `script`, `approver_id`, `forum_topic_id` | polled by `updated_at` every minute |
-| `post_set.update` | `name`, `shortname`, `description`, `is_public`, `transfer_on_delete` | polled by `updated_at` every minute; adding or removing posts is sent as `post_set.add_posts`/`remove_posts` instead |
-| `post_flag.update` | `is_resolved` | the newest 320 flags are rescanned every minute |
-| `takedown.update` | `status` | the newest 320 takedowns are rescanned every minute |
-| `news_update.update` | `message` | the newest 320 news updates are rescanned every 2 minutes |
-| `help_page.update` | `name`, `title`, `wiki_page`, `related` | the whole help list is rescanned every 2 minutes. Help page text lives in its wiki page, so text edits come through as `wiki_page.update` |
+| `comment.update` | `body`, `is_hidden`, `is_sticky`, `warning_type`, `warning_user_id` | `updated_at`, every 30s |
+| `forum_post.update` | `body`, `is_hidden`, `warning_type`, `warning_user_id` | newest 320, every 30s |
+| `forum_topic.update` | `title`, `category_id`, `is_hidden`, `is_locked`, `is_sticky` | `updated_at`, every 30s |
+| `tag_alias.update`, `tag_implication.update` | `status`, `antecedent_name`, `consequent_name`, `reason`, `approver_id`, `forum_topic_id` | `updated_at`, every minute |
+| `bulk_update_request.update` | `status`, `title`, `script`, `approver_id`, `forum_topic_id` | `updated_at`, every minute |
+| `post_set.update` | `name`, `shortname`, `description`, `is_public`, `transfer_on_delete` | `updated_at`, every minute |
+| `post_flag.update` | `is_resolved` | newest 320, every minute |
+| `takedown.update` | `status` | newest 320, every minute |
+| `post_replacement.update` | `status`, `approver_id`, `reason`, `post_id` | newest 320, every minute, see [Replacements](#replacements) |
+| `news_update.update` | `message` | newest 320, every 2 minutes |
+| `help_page.update` | `name`, `title`, `wiki_page`, `related` | all of them, every 2 minutes. The text is in the wiki page, so text edits are `wiki_page.update` |
 
-Forum posts, flags, takedowns and news updates can't be ordered by `updated_at`, so their changes are only caught while the record is still in that rescanned window. `comments.json` blocks `updated_at` ordering, so updated comments are found through the HTML comment listing and then fetched as JSON. For comments, tag requests and BURs changed before the stream knew their previous state, `changes` is `null`.
+"newest 320" ones can't be sorted by `updated_at`, so anything older than that won't be caught. `changes` is `null` for comments, tag requests, BURs & replacements we didn't know about before. `comments.json` doesn't allow sorting by `updated_at` ([e621ng#2298](https://github.com/e621ng/e621ng/issues/2298)), so updated comments are found through the html listing.
 
-**From the mod action log.** User feedback and bans can only be edited by staff, so `user_feedback.update` and `ban.update` come from the [mod action log](#mod-action-events).
+### From mod actions
+Only staff can edit feedback & bans, so `user_feedback.update` and `ban.update` come from the [mod action log](#mod-action-events).
+
+## Replacements
+
+Replacements can't be sorted by `updated_at` either, but accepting, rejecting, promoting or deleting one creates a post event (`replacement_accepted`, `replacement_rejected`, `replacement_promoted`, `replacement_deleted`). When one of those comes in, every replacement on that post gets checked.
+
+`post_replacement.destroy` is `{ post_replacement, post_event }`, sent when a replacement we knew about is gone after a `replacement_deleted`. `post_replacement` is whatever we last knew (`id`, `status`, `approver_id`, `reason`, `post_id`), and `post_event.creator_id` is who deleted it. `post_ids` and `user_ids` filters work.
 
 ## Pool and Set Posts
 
-`pool.add_posts`/`pool.remove_posts` and `post_set.add_posts`/`post_set.remove_posts` fire when posts are added to or removed from a pool or set, and `post_ids` lists them. One change that does both sends both.
-
-| event | data | how it's found |
+| event | data | how |
 |---|---|---|
-| `pool.add_posts`, `pool.remove_posts` | `{ pool_version, post_ids }` | each pool version's `added_post_ids`/`removed_post_ids`, including the pool's first version |
-| `post_set.add_posts`, `post_set.remove_posts` | `{ post_set, post_ids }` | the set's `post_ids` compared against the last state the stream saw, with the same polling as `post_set.update` |
+| `pool.add_posts`, `pool.remove_posts` | `{ pool_version, post_ids }` | the version's `added_post_ids`/`removed_post_ids` |
+| `post_set.add_posts`, `post_set.remove_posts` | `{ post_set, post_ids }` | compared against the last copy of the set we saw |
 
-A set's posts are only known once the stream has seen the set, so changes to a set it has never seen (or whose snapshot expired) aren't sent. `post_ids`, `pool_ids`, `set_ids` and `user_ids` filters work on these, and `post_ids` matches if any of the listed posts do.
+A change that adds and removes sends both. Sets we've never seen won't send these. `post_ids` matches if any of the posts do.
 
 ## Mod Action Events
 
-Hidden and deleted records disappear from e621's API, and some changes are only recorded as mod actions, so these events come from the mod action log. `data` is the mod action (the same record `mod_action.create` sends). `creator_id` is whoever did it, which can be the author hiding their own post. What the action applies to is in `values`:
+Hidden & deleted records disappear from the api, so these come from the mod action log. `data` is the mod action, same as `mod_action.create`. `creator_id` is who did it (which can be someone hiding their own post), `values` depends on the action:
 
 | event | mod action | `values` |
 |---|---|---|

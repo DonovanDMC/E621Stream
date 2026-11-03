@@ -32,6 +32,7 @@ export async function migrate(): Promise<void> {
         )
     `;
     await sql`ALTER TABLE backfill ADD COLUMN IF NOT EXISTS lanes jsonb`;
+    await sql`CREATE INDEX IF NOT EXISTS snapshots_post_replacement_post ON snapshots (((data->>'post_id')::bigint)) WHERE resource = 'post_replacement'`;
 }
 
 export interface Snapshot { data: unknown; id: number; version: number }
@@ -55,6 +56,16 @@ export async function putSnapshots(resource: string, snapshots: Array<Snapshot>)
         ON CONFLICT (resource, id) DO UPDATE SET version = EXCLUDED.version, data = EXCLUDED.data
         WHERE snapshots.version <= EXCLUDED.version
     `;
+}
+
+export async function getReplacementSnapshots(postId: number): Promise<Map<number, Record<string, unknown>>> {
+    const rows = await sql<Array<{ data: Record<string, unknown>; id: number | string }>>`SELECT id, data FROM snapshots WHERE resource = 'post_replacement' AND (data->>'post_id')::bigint = ${postId}`;
+    return new Map(rows.map(row => [Number(row.id), row.data]));
+}
+
+export async function deleteSnapshots(resource: string, ids: Array<number>): Promise<void> {
+    if (ids.length === 0) return;
+    await sql`DELETE FROM snapshots WHERE resource = ${resource} AND id = ANY(${sql.array(ids, "INT8")})`;
 }
 
 export const versionOf = (item: { updated_at?: string | null }): number => {
