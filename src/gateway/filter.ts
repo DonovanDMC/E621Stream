@@ -132,6 +132,11 @@ function facetsOf(event: StreamEvent): Facets {
             const post = d.post as { approver_id: number | null; id: number; pools: Array<number>; rating: string; tags: Record<string, Array<string>>; uploader_id: number };
             return { postIds: [post.id], poolIds: post.pools, userIds: ints(post.uploader_id, post.approver_id), tags: new Set(Object.values(post.tags).flat()), rating: post.rating };
         }
+        case "post.destroy": {
+            const post = (d.post ?? {}) as { approver_id?: number | null; id?: number; pools?: Array<number>; rating?: string; tags?: Record<string, Array<string>> };
+            const event = (d.post_event ?? {}) as Record<string, unknown>;
+            return { postIds: ints(post.id), poolIds: post.pools ?? [], userIds: ints(post.approver_id, event.creator_id), tags: post.tags ? new Set(Object.values(post.tags).flat()) : undefined, rating: post.rating };
+        }
         case "post_version.create":
             return { postIds: ints(d.post_id), userIds: ints(d.updater_id), tags: new Set((typeof d.tags === "string" ? d.tags : "").split(" ").filter(Boolean)), rating: d.rating as string };
         case "pool_version.create":

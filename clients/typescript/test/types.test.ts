@@ -28,6 +28,14 @@ test("event types narrow", () => {
             void level;
         }
     });
+    stream.on("post.destroy", (event) => {
+        const id: number = event.data.post.id;
+        const tags: Array<string> | undefined = event.data.post.tags?.general;
+        const by: number | null = event.data.post_event.creator_id;
+        void id;
+        void tags;
+        void by;
+    });
     stream.on("pool.add_posts", (event) => {
         const ids: Array<number> = event.data.post_ids;
         void ids;

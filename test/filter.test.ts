@@ -158,6 +158,14 @@ describe("id filters", () => {
         expect(matches(compile({ type: "post_replacement.destroy", filter: { post_ids: [101] } }), destroyed)).toBe(false);
     });
 
+    test("post destroys filter by what was last known of the post", () => {
+        const destroyed = event("post.destroy", { post: { id: 100, rating: "s", pools: [5], approver_id: 2, tags: { general: ["solo"], species: ["fox"] } }, post_event: { id: 1, post_id: 100, action: "expunged", creator_id: 9 } });
+        expect(matches(compile({ type: "post.*", filter: { tags: "fox rating:s" } }), destroyed)).toBe(true);
+        expect(matches(compile({ type: "post.destroy", filter: { pool_ids: [5], user_ids: [9] } }), destroyed)).toBe(true);
+        expect(matches(compile({ type: "post.destroy", filter: { tags: "wolf" } }), destroyed)).toBe(false);
+        expect(matches(compile({ type: "post.destroy", filter: { post_ids: [7] } }), event("post.destroy", { post: { id: 7 }, post_event: { id: 2, post_id: 7, action: "expunged", creator_id: 9 } }))).toBe(true);
+    });
+
     test("bad ids are rejected", () => {
         expect(() => compile({ type: "*", filter: { post_ids: ["1"] } })).toThrow(FilterError);
     });

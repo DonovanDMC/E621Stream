@@ -13,6 +13,7 @@
 |---|---|
 | `post.create` | `{ post }`: a new upload |
 | `post.update` | `{ post, changes }`: anything that bumps the post's `change_seq` (tags, rating, sources, description, parent, flags, file replacement, pools, …). `changes` maps each field (tags per category, e.g. `tags.general`) to `{ added, removed }` or `{ old, new }`. It is `null` when the previous state isn't known. |
+| `post.destroy` | `{ post, post_event }`: a post was expunged, which removes it from e621 entirely. Since it can't be fetched anymore, `post` is what was last known of it (`id`, `tags` per category, `rating`, `md5`, `sources`, `pools`, `description`, `flags`, …, only `id` if the stream never saw it), and `post_event` is the `expunged` post event, whose `creator_id` is who expunged it. All `post.*` filters work on it except the uploader, which isn't kept. |
 | `post_version.create` | a post version (who changed tags/rating/source/description) |
 | `post_event.create` | approvals, deletions, undeletions, flags, locks, replacements, … (`action`) |
 | `post_approval.create`, `post_flag.create`, `post_replacement.create`, `upload_karma_event.create` | |

@@ -27,3 +27,20 @@ export type PostChanges = Partial<
         sources: SetChange<string>;
     }
 >;
+
+/** What was last known of a post, only `id` is guaranteed. */
+export type PostSnapshot = Partial<{
+    approver_id: number | null;
+    change_seq: number;
+    children: Array<number>;
+    description: string;
+    flags: LegacyPost["flags"];
+    has_notes: boolean;
+    locked_tags: Array<string>;
+    md5: string;
+    parent_id: number | null;
+    pools: Array<number>;
+    rating: LegacyPost["rating"];
+    sources: Array<string>;
+    tags: Partial<Record<TagCategoryName, Array<string>>>;
+}> & { id: number };

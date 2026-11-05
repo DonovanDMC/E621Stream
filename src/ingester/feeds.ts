@@ -5,7 +5,7 @@ import { e621, request } from "../e621.ts";
 import { MOD_ACTION_EVENTS, publish, type EventType } from "../events.ts";
 import redis from "../redis.ts";
 
-import { checkReplacements } from "./replacements.ts";
+import { afterPostEvent } from "./postEvents.ts";
 import { isPrivateSet, remember, TRACKED, type Tracked } from "./updates.ts";
 
 interface Page { limit: number; page: `${"a" | "b"}${number}` }
@@ -61,7 +61,7 @@ function poolMembers(item: Item): Array<{ data: unknown; type: EventType }> {
 
 export const FEEDS: Array<FeedSource> = [
     { name: "post_versions", event: "post_version.create", intervalMS: 8000, search: page => e621.postVersions.search(page) },
-    { name: "post_events", event: "post_event.create", intervalMS: 8000, search: page => e621.postEvents.search(page), after: checkReplacements },
+    { name: "post_events", event: "post_event.create", intervalMS: 8000, search: page => e621.postEvents.search(page), after: afterPostEvent },
     { name: "comments", event: "comment.create", intervalMS: 8000, search: page => e621.comments.search({ ...page, group_by: "comment" }), tracked: TRACKED.comment },
     { name: "forum_posts", event: "forum_post.create", intervalMS: 15_000, search: page => e621.forumPosts.search(page), tracked: TRACKED.forumPost },
     { name: "forum_topics", event: "forum_topic.create", intervalMS: 20_000, search: page => e621.forumTopics.search(page), tracked: TRACKED.forumTopic },
