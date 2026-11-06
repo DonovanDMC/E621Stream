@@ -45,14 +45,16 @@ export async function getSnapshots(resource: string, ids: Array<number>): Promis
 
 export async function putSnapshots(resource: string, snapshots: Array<Snapshot>): Promise<void> {
     if (snapshots.length === 0) return;
-    // the same record twice in one statement is an error, so only the newest of each goes in
+    // postgres errors if the same row is in one insert twice
     const newest = new Map<number, Snapshot>();
     for (const snap of snapshots) if ((newest.get(snap.id)?.version ?? -1) <= snap.version) newest.set(snap.id, snap);
-    const rows = [...newest.values()];
+    // locked in id order so this can't deadlock with the backfill
+    const rows = [...newest.values()].sort((a, b) => a.id - b.id);
     await sql`
         INSERT INTO snapshots (resource, id, version, data)
         SELECT ${resource}, t.id, t.version, t.data::jsonb
         FROM unnest(${sql.array(rows.map(r => r.id), "INT8")}, ${sql.array(rows.map(r => r.version), "INT8")}, ${sql.array(rows.map(r => JSON.stringify(r.data)), "TEXT")}) AS t(id, version, data)
+        ORDER BY t.id
         ON CONFLICT (resource, id) DO UPDATE SET version = EXCLUDED.version, data = EXCLUDED.data
         WHERE snapshots.version <= EXCLUDED.version
     `;
@@ -66,6 +68,18 @@ export async function getReplacementSnapshots(postId: number): Promise<Map<numbe
 export async function deleteSnapshots(resource: string, ids: Array<number>): Promise<void> {
     if (ids.length === 0) return;
     await sql`DELETE FROM snapshots WHERE resource = ${resource} AND id = ANY(${sql.array(ids, "INT8")})`;
+}
+
+export async function retryDeadlocks<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return await fn();
+        } catch (err) {
+            const deadlock = (err as { code?: string; errno?: string }).errno === "40P01" || (err as { code?: string }).code === "40P01" || String(err).includes("deadlock detected");
+            if (!deadlock || attempt >= attempts) throw err;
+            await Bun.sleep(attempt * 1000);
+        }
+    }
 }
 
 export const versionOf = (item: { updated_at?: string | null }): number => {

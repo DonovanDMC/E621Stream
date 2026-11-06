@@ -2,7 +2,7 @@ import Debug from "@yiffy/debug";
 import E621ExportDownloader from "e621-export-downloader";
 
 import { databaseURL, e621UserAgent } from "../config.ts";
-import sql from "../db.ts";
+import sql, { retryDeadlocks } from "../db.ts";
 
 import { setState } from "./state.ts";
 
@@ -158,7 +158,7 @@ export async function importPosts(): Promise<void> {
     let written = 0;
     for (let from = 0; from < Number(max); from += POST_BATCH) {
         const to = from + POST_BATCH;
-        const result = await sql.unsafe<Written>(`
+        const result = await retryDeadlocks(() => sql.unsafe<Written>(`
             WITH batch AS (SELECT * FROM ${posts.table} WHERE id > ${from} AND id <= ${to}),
             ${postTags}
             INSERT INTO snapshots (resource, id, version, data)
@@ -167,8 +167,9 @@ export async function importPosts(): Promise<void> {
             LEFT JOIN post_tags t ON t.id = b.id
             LEFT JOIN bf_children c ON c.id = b.id
             LEFT JOIN bf_post_pools p ON p.id = b.id
+            ORDER BY b.id
             ${upsert}
-        `);
+        `));
         written += result.count;
         Debug("backfill", `posts: up to id ${to}, ${written} snapshot(s) written`);
         await setState("posts", "export", { cursor: Math.min(to, Number(max)), ceiling: Number(max), stored: written, detail: "building snapshots" });
