@@ -43,4 +43,14 @@ export type PostSnapshot = Partial<{
     rating: LegacyPost["rating"];
     sources: Array<string>;
     tags: Partial<Record<TagCategoryName, Array<string>>>;
-}> & { id: number };
+} & Omit<PostStats, "changes" | "post_id">> & { id: number };
+
+export interface PostScore { down: number; total: number; up: number }
+
+export interface PostStats {
+    changes: Partial<{ comment_count: ValueChange<number>; fav_count: ValueChange<number>; score: ValueChange<PostScore> }>;
+    comment_count: number;
+    fav_count: number;
+    post_id: number;
+    score: PostScore;
+}

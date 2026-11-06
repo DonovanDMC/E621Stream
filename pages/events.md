@@ -9,33 +9,32 @@
 
 ## Event Types
 
+Unless noted otherwise, `data` is the record exactly as the api returns it.
+
 | type | data |
 |---|---|
-| `post.create` | `{ post }`: a new upload |
-| `post.update` | `{ post, changes }`: anything that bumps the post's `change_seq` (tags, rating, sources, description, parent, flags, file replacement, pools, …). `changes` maps each field (tags per category, e.g. `tags.general`) to `{ added, removed }` or `{ old, new }`. It is `null` when the previous state isn't known. |
-| `post.destroy` | `{ post, post_event }`: a post was expunged, which removes it from e621 entirely. Since it can't be fetched anymore, `post` is what was last known of it (`id`, `tags` per category, `rating`, `md5`, `sources`, `pools`, `description`, `flags`, …, only `id` if the stream never saw it), and `post_event` is the `expunged` post event, whose `creator_id` is who expunged it. All `post.*` filters work on it except the uploader, which isn't kept. |
-| `post_version.create` | a post version (who changed tags/rating/source/description) |
-| `post_event.create` | approvals, deletions, undeletions, flags, locks, replacements, … (`action`) |
+| `post.create` | `{ post }` |
+| `post.update` | `{ post, changes }`, for anything that bumps `change_seq` (tags, rating, sources, description, parent, flags, replacements, pools, etc). `changes` has `{ added, removed }` or `{ old, new }` for each field, tags are per category (`tags.general`). `null` if we didn't know the post before. Votes/favorites/comments are `post.stats` |
+| `post.stats` | `{ post_id, score, fav_count, comment_count, changes }`. `score` is `{ up, down, total }`, `changes` is only what changed. There's hundreds of these a minute, so it doesn't include the post. No tags, so tag filters won't match it |
+| `post.destroy` | `{ post, post_event }`, when a post is expunged. The post is gone, so `post` is whatever we last knew about it (only `id` if we never saw it). `post_event.creator_id` is who expunged it. Every `post.*` filter works except the uploader |
+| `post_version.create` | |
+| `post_event.create` | approvals, deletions, flags, locks, replacements, etc (`action`) |
 | `post_approval.create`, `post_flag.create`, `post_replacement.create`, `upload_karma_event.create` | |
 | `comment.create`, `forum_topic.create`, `forum_post.create`, `blip.create` | |
-| `note.create`, `pool.create`, `post_set.create` (public sets only), `wiki_page.create`, `artist.create`, `artist_url.create`, `avoid_posting.create`, `tag.create`, `help_page.create` | |
+| `note.create`, `pool.create`, `post_set.create` (public only), `wiki_page.create`, `artist.create`, `artist_url.create`, `avoid_posting.create`, `tag.create`, `help_page.create` | |
 | `note_version.create`, `pool_version.create`, `wiki_page_version.create`, `artist_version.create`, `avoid_posting_version.create`, `tag_type_version.create` | |
 | `tag_alias.create`, `tag_implication.create`, `bulk_update_request.create` | |
 | `user.create`, `user_feedback.create`, `ban.create`, `takedown.create`, `news_update.create` | |
-| `user.update`, `user.delete` | mod action, see [Mod Action Events](#mod-action-events) |
 | `mod_action.create` | |
-| `*.update` | see [Update events](#update-events) |
-| `post_replacement.destroy` | `{ post_replacement, post_event }`, see [Replacements](#replacements) |
-| `pool.add_posts`, `pool.remove_posts`, `post_set.add_posts`, `post_set.remove_posts` | see [Pool and set posts](#pool-and-set-posts) |
-| `*.hide`, `*.unhide`, `*.delete`, `*.undelete`, `*.destroy` | mod action, see [Mod action events](#mod-action-events) |
-
-Except for posts and the update events, `data` is the record exactly as e621's API returns it.
+| `*.update` | see [Update Events](#update-events) |
+| `pool.add_posts`, `pool.remove_posts`, `post_set.add_posts`, `post_set.remove_posts` | see [Pool and Set Posts](#pool-and-set-posts) |
+| `post_replacement.destroy` | see [Replacements](#replacements) |
+| `user.update`, `user.delete`, `*.hide`, `*.unhide`, `*.delete`, `*.undelete`, `*.destroy` | see [Mod Action Events](#mod-action-events) |
 
 ## Update Events
 
-Updates come from one of three places, depending on what e621 offers for the resource.
-
-**From versions.** Resources with a version history publish an update for every version after the first (the first is the record being created, which the create event covers). `data` is the version record, the same one the matching `*_version.create` sends, and filters apply as they do to it:
+### From versions
+Anything with a version history gets an update for every version after the first one (the first is the create). `data` is the version, same as the matching `*_version.create`, and filters work the same.
 
 | event | from |
 |---|---|

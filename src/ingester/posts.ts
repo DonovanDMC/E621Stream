@@ -9,9 +9,11 @@ import redis from "../redis.ts";
 export interface Post {
     approver_id: number | null;
     change_seq: number;
+    comment_count: number;
     created_at: string;
     description: string;
     duration: number | null;
+    fav_count: number;
     file: { ext: string; height: number; md5: string; size: number; width: number };
     flags: Record<string, boolean>;
     has_notes: boolean;
@@ -20,14 +22,19 @@ export interface Post {
     pools: Array<number>;
     rating: string;
     relationships: { children: Array<number>; parent_id: number | null };
+    score: PostScore;
     sources: Array<string>;
     tags: Record<string, Array<string>>;
     updated_at: string;
     uploader_id: number;
 }
 
-// only what's needed to tell what changed, the full post is ~3x larger
-export interface Snapshot {
+export interface PostScore { down: number; total: number; up: number }
+
+export interface PostStats { comment_count: number; fav_count: number; score: PostScore }
+
+// the full post is ~3x larger
+export interface Snapshot extends Partial<PostStats> {
     approver_id: number | null;
     change_seq: number;
     children: Array<number>;
@@ -48,7 +55,9 @@ export type Changes = Record<string, { new: unknown; old: unknown } | { added: A
 const LIMIT = 320;
 const MAX_PAGES_PER_POLL = 20;
 const NEW_POST_WINDOW_MS = 15 * 60 * 1000;
-const SEQ_FIELD = "posts:change_seq";
+const UPDATED_FIELD = "posts:updated_at";
+// order:updated isn't quite in order, the furthest out seen was about 19 seconds
+const OVERLAP_MS = 30_000;
 const MAX_ID_FIELD = "posts:max_id";
 
 async function search(tags: string, limit: number, page: number): Promise<Array<Post>> {
@@ -70,7 +79,19 @@ export function snapshot(post: Post): Snapshot {
         rating: post.rating,
         sources: post.sources,
         tags: post.tags,
+        score: { up: post.score.up, down: post.score.down, total: post.score.total },
+        fav_count: post.fav_count,
+        comment_count: post.comment_count,
     };
+}
+
+export function statsDiff(before: Partial<PostStats>, after: PostStats): Changes | null {
+    if (!before.score || before.fav_count === undefined || before.comment_count === undefined) return null;
+    const changes: Changes = {};
+    if (JSON.stringify(before.score) !== JSON.stringify(after.score)) changes.score = { old: before.score, new: after.score };
+    if (before.fav_count !== after.fav_count) changes.fav_count = { old: before.fav_count, new: after.fav_count };
+    if (before.comment_count !== after.comment_count) changes.comment_count = { old: before.comment_count, new: after.comment_count };
+    return changes;
 }
 
 function setDiff<T>(before: Array<T>, after: Array<T>): { added: Array<T>; removed: Array<T> } | null {
@@ -108,49 +129,52 @@ export function diff(before: Partial<Snapshot>, after: Snapshot): Changes {
 }
 
 export class PostsFeed {
+    private cursor: number | null = null;
     private maxId = 0;
-    private seq: number | null = null;
     readonly source = { name: "posts", intervalMS: 5000 } as const;
 
     private async init(): Promise<number> {
-        const [seq, maxId] = await redis.hmget(cursorKey, [SEQ_FIELD, MAX_ID_FIELD]);
-        if (seq && maxId) {
+        const [updated, maxId] = await redis.hmget(cursorKey, [UPDATED_FIELD, MAX_ID_FIELD]);
+        if (updated && maxId) {
             this.maxId = Number(maxId);
-            return this.seq = Number(seq);
+            return this.cursor = Number(updated);
         }
-        // status:any is required everywhere, deleted posts are otherwise invisible to every search, including these
-        const [byChange] = await search("order:change status:any", 1, 1);
-        const [byId] = await search("status:any", 1, 1);
-        this.seq = byChange?.change_seq ?? 0;
-        this.maxId = byId?.id ?? 0;
-        await redis.hset(cursorKey, { [SEQ_FIELD]: String(this.seq), [MAX_ID_FIELD]: String(this.maxId) });
-        Debug("ingester:posts", `starting at change_seq ${this.seq}, post id ${this.maxId}`);
-        return this.seq;
+        // status:any is needed, deleted posts are invisible to every search otherwise
+        const [byUpdate] = await search("order:updated status:any", 1, 1);
+        this.cursor = byUpdate ? Date.parse(byUpdate.updated_at) : Date.now();
+        if (!maxId) {
+            const [byId] = await search("status:any", 1, 1);
+            this.maxId = byId?.id ?? 0;
+        } else {
+            this.maxId = Number(maxId);
+        }
+        await redis.hset(cursorKey, { [UPDATED_FIELD]: String(this.cursor), [MAX_ID_FIELD]: String(this.maxId) });
+        Debug("ingester:posts", `starting at ${new Date(this.cursor).toISOString()}, post id ${this.maxId}`);
+        return this.cursor;
     }
 
     async poll(): Promise<number> {
-        const since = this.seq ?? await this.init();
-        // newest change first, so walk back until we reach what was already handled
+        const cursor = this.cursor ?? await this.init();
+        // updated_at also changes for votes, favorites and comments
+        const since = cursor - OVERLAP_MS;
         const found = new Map<number, Post>();
         let caughtUp = false;
         for (let page = 1; page <= MAX_PAGES_PER_POLL && !caughtUp; page++) {
-            const posts = await search("order:change status:any", LIMIT, page);
+            const posts = await search("order:updated status:any", LIMIT, page);
             for (const post of posts) {
-                if (post.change_seq <= since) {
-                    caughtUp = true;
-                    break;
-                }
-                // the list can shift while paging, keep the newest copy of each post
                 const existing = found.get(post.id);
-                if (!existing || existing.change_seq < post.change_seq) found.set(post.id, post);
+                if (Date.parse(post.updated_at) > since && (!existing || existing.updated_at < post.updated_at)) found.set(post.id, post);
             }
-            if (posts.length < LIMIT) caughtUp = true;
+            const oldest = posts.at(-1);
+            if (posts.length < LIMIT || (oldest && Date.parse(oldest.updated_at) <= since)) caughtUp = true;
         }
-        if (!caughtUp) Debug("ingester:posts", `more than ${MAX_PAGES_PER_POLL * LIMIT} changes since ${since}, some intermediate states were skipped`);
+        if (!caughtUp) Debug("ingester:posts", `more than ${MAX_PAGES_PER_POLL * LIMIT} updates since ${new Date(since).toISOString()}, some were skipped`);
         if (found.size === 0) return 0;
 
-        const posts = [...found.values()].sort((a, b) => a.change_seq - b.change_seq);
+        const posts = [...found.values()].sort((a, b) => Date.parse(a.updated_at) - Date.parse(b.updated_at));
         const previous = await getSnapshots("post", posts.map(p => p.id)) as Map<number, unknown> as Map<number, Snapshot>;
+        const writes: Array<{ data: Snapshot; id: number; version: number }> = [];
+        let published = 0;
         for (const post of posts) {
             const snap = snapshot(post);
             const before = previous.get(post.id) ?? null;
@@ -159,16 +183,22 @@ export class PostsFeed {
             if (isNew) {
                 if (post.id > this.maxId) this.maxId = post.id;
                 await publish("post.create", post.created_at, { post });
-            } else {
-                // null means we haven't seen this post before, so we can't say what changed
-                const changes = before ? diff(before, snap) : null;
-                await publish("post.update", post.updated_at, { post, changes });
+                published++;
+            } else if (before?.change_seq !== post.change_seq) {
+                await publish("post.update", post.updated_at, { post, changes: before ? diff(before, snap) : null });
+                published++;
             }
+            const stats = before && !isNew ? statsDiff(before, snap as PostStats) : null;
+            if (stats && Object.keys(stats).length !== 0) {
+                await publish("post.stats", post.updated_at, { post_id: post.id, score: snap.score, fav_count: snap.fav_count, comment_count: snap.comment_count, changes: stats });
+                published++;
+            }
+            if (!before || JSON.stringify(before) !== JSON.stringify(snap)) writes.push({ id: post.id, version: post.change_seq, data: snap });
         }
-        await putSnapshots("post", posts.map(post => ({ id: post.id, version: post.change_seq, data: snapshot(post) })));
+        await putSnapshots("post", writes);
 
-        this.seq = posts.at(-1)!.change_seq;
-        await redis.hset(cursorKey, { [SEQ_FIELD]: String(this.seq), [MAX_ID_FIELD]: String(this.maxId) });
-        return posts.length;
+        this.cursor = Math.max(cursor, ...posts.map(post => Date.parse(post.updated_at)));
+        await redis.hset(cursorKey, { [UPDATED_FIELD]: String(this.cursor), [MAX_ID_FIELD]: String(this.maxId) });
+        return published;
     }
 }

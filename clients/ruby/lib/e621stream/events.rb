@@ -13,7 +13,7 @@ module E621Stream
       forum_topic.delete forum_topic.hide forum_topic.unhide forum_topic.update help_page.create help_page.update
       mod_action.create news_update.create news_update.update note.create note.update note_version.create
       pool.add_posts pool.create pool.delete pool.remove_posts pool.update pool_version.create post.create
-      post.destroy post.update post_approval.create post_event.create post_flag.create post_flag.update
+      post.destroy post.stats post.update post_approval.create post_event.create post_flag.create post_flag.update
       post_replacement.create post_replacement.destroy post_replacement.update post_set.add_posts post_set.create
       post_set.delete post_set.remove_posts post_set.update post_version.create post_version.hide post_version.unhide
       tag.create tag.delete tag.update tag_alias.create tag_alias.update tag_implication.create tag_implication.update

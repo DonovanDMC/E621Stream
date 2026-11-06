@@ -112,6 +112,9 @@ export async function importPosts(): Promise<void> {
         text("rating", "b."),
         { field: "sources", columns: ["source"], sql: "to_jsonb(coalesce(string_to_array(nullif(b.source, ''), E'\\n'), '{}'))" },
         { field: "tags", columns: ["tag_string", "tags:name,category"], sql: "coalesce(t.tags, '{}'::jsonb)" },
+        { field: "score", columns: ["score", "up_score", "down_score"], sql: "jsonb_build_object('up', b.up_score::int, 'down', b.down_score::int, 'total', b.score::int)" },
+        { field: "fav_count", columns: ["fav_count"], sql: "b.fav_count::int" },
+        { field: "comment_count", columns: ["comment_count"], sql: "b.comment_count::int" },
     ];
     const data = build("posts", fields, has);
 

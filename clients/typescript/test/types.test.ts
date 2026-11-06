@@ -36,6 +36,12 @@ test("event types narrow", () => {
         void tags;
         void by;
     });
+    stream.on("post.stats", (event) => {
+        const favorites: number | undefined = event.data.changes.fav_count?.new;
+        const score: number = event.data.score.total;
+        void favorites;
+        void score;
+    });
     stream.on("pool.add_posts", (event) => {
         const ids: Array<number> = event.data.post_ids;
         void ids;

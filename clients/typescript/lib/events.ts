@@ -51,6 +51,7 @@ export const EVENT_TYPES = [
     "pool_version.create",
     "post.create",
     "post.destroy",
+    "post.stats",
     "post.update",
     "post_approval.create",
     "post_event.create",
