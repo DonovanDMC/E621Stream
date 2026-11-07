@@ -99,6 +99,7 @@ async function build(): Promise<Record<string, unknown>> {
     const feeds = Object.entries(feedHealth ?? {}).map(([name, health]) => ({ name, ...JSON.parse(health) as FeedHealth })).sort((a, b) => a.name.localeCompare(b.name));
     const hour = add(minutes.map(m => m.counts)), day = add(hours.map(h => h.counts));
     const byType = Object.entries(day).filter(([field]) => field.startsWith("events.")).map(([field, n]) => ({ type: field.slice(7), count: n })).sort((a, b) => b.count - a.count);
+    const allTypes = Object.entries(allTime).filter(([field]) => field.startsWith("events.")).map(([field, n]) => ({ type: field.slice(7), last_hour: hour[field] ?? 0, last_24h: day[field] ?? 0, total: n })).sort((a, b) => b.total - a.total || a.type.localeCompare(b.type));
     const routes = [...new Set(Object.keys(day).filter(field => field.startsWith("route.")).map(field => field.slice(6)))].sort();
     const roles = [...new Set(Object.keys(allTime).filter(field => field.startsWith("requests.")).map(field => field.slice(9)))].sort();
     const rate = (counts: Counts, role: string): Record<string, number | null> => ({
@@ -135,6 +136,7 @@ async function build(): Promise<Record<string, unknown>> {
             oldest_retained_at: oldest[0] ? new Date(Number(oldest[0][0].split("-")[0])).toISOString() : null,
             last_event_at: hubStats.lastEventAt,
             by_type_last_24h: byType,
+            by_type: allTypes,
             per_minute: minutes.map(m => ({ at: new Date(m.at).toISOString(), events: eventsOf(m.counts) })),
         },
         gateway: { connections: sessions.size, events_received: hubStats.received },
@@ -191,7 +193,7 @@ export async function statusPage(): Promise<string> {
     const data = await status() as {
         backfill: Array<Backfill> | { error: string };
         data: { counted_at: string | null; models: Array<Model> };
-        events: { by_type_last_24h: Array<{ count: number; type: string }>; last_24h: number; last_event_at: string | null; last_hour: number; oldest_retained_at: string | null; per_minute: Array<{ events: number }>; per_minute_last_hour: number; retained: number; total: number };
+        events: { by_type: Array<{ last_24h: number; last_hour: number; total: number; type: string }>; by_type_last_24h: Array<{ count: number; type: string }>; last_24h: number; last_event_at: string | null; last_hour: number; oldest_retained_at: string | null; per_minute: Array<{ events: number }>; per_minute_last_hour: number; retained: number; total: number };
         feeds: Array<FeedHealth & { name: string }>;
         gateway: { connections: number };
         gateway_commit: string;
@@ -223,7 +225,7 @@ export async function statusPage(): Promise<string> {
         <td class="n">${num(r.last_24h.requests ?? 0)}</td><td class="n">${num(r.last_24h.failed ?? 0)}</td><td class="n">${num(r.last_24h.ratelimited ?? 0)}</td><td class="n">${ms(r.last_24h.avg_ms)}</td></tr>`).join("");
     const routeRows = Object.entries(requests.by_route).map(([route, r]) => `<tr><td>${esc(route)}</td>
         <td class="n">${num(r.last_hour.requests)}</td><td class="n">${ms(r.last_hour.avg_ms)}</td><td class="n">${num(r.last_24h.requests)}</td><td class="n">${ms(r.last_24h.avg_ms)}</td></tr>`).join("");
-    const typeRows = events.by_type_last_24h.map(t => `<tr><td>${esc(t.type)}</td><td class="n">${num(t.count)}</td></tr>`).join("");
+    const typeRows = events.by_type.map(t => `<tr><td>${esc(t.type)}</td><td class="n">${num(t.last_hour)}</td><td class="n">${num(t.last_24h)}</td><td class="n">${num(t.total)}</td></tr>`).join("");
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -318,9 +320,9 @@ ${modelRows}
 ${feedRows}
 </table></div>
 
-<h2>Event types (last 24 hours)</h2>
+<h2>Event types</h2>
 <div class="table-wrap"><table>
-<tr><th>type</th><th>events</th></tr>
+<tr><th>type</th><th>last hour</th><th>last 24 hours</th><th>total</th></tr>
 ${typeRows}
 </table></div>
 
