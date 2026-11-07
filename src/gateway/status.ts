@@ -265,7 +265,7 @@ ${NAV_CSS}
 ${navHTML(NAV, "/status")}
 <main>
 <h1>E621Stream status</h1>
-<p>${data.ingester.idle ? `Nobody's connected, so feeds are polled ${data.ingester.idle_poll_scale}x slower and the backfill gets the spare requests.` : `${num(data.ingester.clients)} client(s) connected, feeds are polled at full speed.`}</p>
+<p>${data.ingester.idle ? `Nobody's connected, so feeds are polled ${data.ingester.idle_poll_scale}x slower and the backfill gets the spare requests.` : data.ingester.clients === 0 ? "Nobody's connected, but there's nothing left to backfill, so feeds are polled at full speed." : `${num(data.ingester.clients)} client(s) connected, feeds are polled at full speed.`}</p>
 
 <h2>Events</h2>
 <div class="stats">
@@ -306,7 +306,7 @@ ${backfillRows}
 </table></div>`}
 
 <h2>Data</h2>
-<p class="dim">Every record update events are compared against. Deleted and hidden records have ids that are never seen, so the highest id is more than what can be stored. Changes show up within the slowest of each model's feeds, which is ${num(data.ingester.idle_poll_scale)}x slower while nobody's connected. Counted ${ago(data.data.counted_at)}.</p>
+<p class="dim">Every record update events are compared against. Deleted and hidden records have ids that are never seen, so the highest id is more than what can be stored. Changes show up within the slowest of each model's feeds, which is ${num(data.ingester.idle_poll_scale)}x slower while nobody's connected and the backfill is running. Counted ${ago(data.data.counted_at)}.</p>
 <div class="table-wrap"><table>
 <tr><th>model</th><th>stored</th><th>highest id on e621</th><th>last checked</th><th>changes show up</th></tr>
 ${modelRows}
