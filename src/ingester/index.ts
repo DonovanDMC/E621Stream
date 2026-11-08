@@ -4,6 +4,7 @@ import { startBackfill } from "../backfill/runner.ts";
 import { backfillEnabled, disabledSources, feedsKey, gitCommit, pollIntervalScale, retentionHours, redisPrefix, streamKey } from "../config.ts";
 import { migrate } from "../db.ts";
 import { AuthError, hasAuth } from "../e621.ts";
+import { markTrackingStart } from "../metrics.ts";
 import redis from "../redis.ts";
 
 import { startDataCounts } from "./data.ts";
@@ -80,6 +81,7 @@ export async function startIngester(): Promise<void> {
     await redis.set(`${redisPrefix}:ingester:started_at`, new Date().toISOString());
     await redis.set(`${redisPrefix}:ingester:commit`, gitCommit);
     await startIdleWatch();
+    await markTrackingStart();
     const feeds: Array<Pollable> = [new PostsFeed(), ...FEEDS.map(source => new Feed(source)), ...UPDATES.map(source => new UpdateFeed(source))];
     for (const feed of feeds) {
         if (disabledSources.has(feed.source.name)) {

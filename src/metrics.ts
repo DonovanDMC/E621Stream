@@ -4,6 +4,7 @@ import redis from "./redis.ts";
 const minuteKey = (minute: number): string => `${redisPrefix}:metrics:m:${minute}`;
 const hourKey = (hour: number): string => `${redisPrefix}:metrics:h:${hour}`;
 const totalsKey = `${redisPrefix}:metrics:total`;
+const sinceKey = `${redisPrefix}:metrics:since`;
 const MINUTE_TTL_SECONDS = 2 * 60 * 60;
 const HOUR_TTL_SECONDS = 8 * 24 * 60 * 60;
 const FLUSH_MS = 5000;
@@ -47,3 +48,18 @@ export async function recent(unit: "hour" | "minute", n: number): Promise<Array<
 }
 
 export const totals = (): Promise<Counts> => read(totalsKey);
+
+export const trackingSince = (): Promise<string | null> => redis.get(sinceKey);
+
+export async function markTrackingStart(): Promise<void> {
+    if (await redis.exists(sinceKey)) return;
+    // tracking started before this existed, the oldest hour still around is close enough
+    let cursor = "0", oldest = Infinity;
+    do {
+        const [next, keys] = await redis.send("SCAN", [cursor, "MATCH", `${redisPrefix}:metrics:h:*`, "COUNT", "1000"]) as [string, Array<string>];
+        cursor = next;
+        for (const key of keys) oldest = Math.min(oldest, Number(key.slice(key.lastIndexOf(":") + 1)));
+    } while (cursor !== "0");
+    const since = Number.isFinite(oldest) ? new Date(oldest * 3_600_000) : new Date();
+    await redis.send("SET", [sinceKey, since.toISOString(), "NX"]);
+}

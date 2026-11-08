@@ -1,6 +1,6 @@
 import { listStates, type BackfillState } from "../backfill/state.ts";
 import { clientsKey, cursorKey, dataKey, feedsKey, gitCommit, idleKey, idlePollScale, redisPrefix, repositoryURL, streamKey } from "../config.ts";
-import { recent, totals, type Counts } from "../metrics.ts";
+import { recent, totals, trackingSince, type Counts } from "../metrics.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
 import redis from "../redis.ts";
 
@@ -81,7 +81,7 @@ function backfillProgress(state: BackfillState): Backfill {
 }
 
 async function build(): Promise<Record<string, unknown>> {
-    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors, ingesterCommit] = await Promise.all([
+    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors, ingesterCommit, since] = await Promise.all([
         recent("minute", 60),
         recent("hour", 24),
         totals(),
@@ -95,6 +95,7 @@ async function build(): Promise<Record<string, unknown>> {
         redis.get(dataKey).then(raw => raw === null ? null : JSON.parse(raw) as DataCounts),
         redis.send("HGETALL", [cursorKey]) as Promise<Record<string, string> | null>,
         redis.get(`${redisPrefix}:ingester:commit`),
+        trackingSince(),
     ]);
     const feeds = Object.entries(feedHealth ?? {}).map(([name, health]) => ({ name, ...JSON.parse(health) as FeedHealth })).sort((a, b) => a.name.localeCompare(b.name));
     const hour = add(minutes.map(m => m.counts)), day = add(hours.map(h => h.counts));
@@ -110,6 +111,7 @@ async function build(): Promise<Record<string, unknown>> {
     });
     return {
         generated_at: new Date().toISOString(),
+        tracking_since: since,
         ingester: { started_at: startedAt, idle: idle === "true", idle_poll_scale: idlePollScale, clients, commit: ingesterCommit },
         gateway_commit: gitCommit,
         requests: {
@@ -200,6 +202,7 @@ export async function statusPage(): Promise<string> {
         generated_at: string;
         ingester: { clients: number; commit: string | null; idle: boolean; idle_poll_scale: number; started_at: string | null };
         requests: { avg_ms: Record<string, number | null>; by_role: Record<string, { last_24h: Record<string, number | null>; last_hour: Record<string, number | null> }>; by_route: Record<string, { last_24h: { avg_ms: number | null; requests: number }; last_hour: { avg_ms: number | null; requests: number } }>; failed: Counts; last_24h: number; last_hour: number; per_minute: Array<{ avg_ms: number | null; failed: number; requests: number }>; per_second_last_hour: number; ratelimited: Counts; total: number };
+        tracking_since: string | null;
     };
     const { backfill, events, feeds, requests } = data;
     const backfillDone = Array.isArray(backfill) && backfill.length !== 0 && backfill.every(b => b.status === "done");
@@ -225,6 +228,7 @@ export async function statusPage(): Promise<string> {
         <td class="n">${num(r.last_24h.requests ?? 0)}</td><td class="n">${num(r.last_24h.failed ?? 0)}</td><td class="n">${num(r.last_24h.ratelimited ?? 0)}</td><td class="n">${ms(r.last_24h.avg_ms)}</td></tr>`).join("");
     const routeRows = Object.entries(requests.by_route).map(([route, r]) => `<tr><td>${esc(route)}</td>
         <td class="n">${num(r.last_hour.requests)}</td><td class="n">${ms(r.last_hour.avg_ms)}</td><td class="n">${num(r.last_24h.requests)}</td><td class="n">${ms(r.last_24h.avg_ms)}</td></tr>`).join("");
+    const since = data.tracking_since ? `since ${esc(data.tracking_since.slice(0, 10))}` : "";
     const typeRows = events.by_type.map(t => `<tr><td>${esc(t.type)}</td><td class="n">${num(t.last_hour)}</td><td class="n">${num(t.last_24h)}</td><td class="n">${num(t.total)}</td></tr>`).join("");
 
     return `<!DOCTYPE html>
@@ -274,7 +278,7 @@ ${navHTML(NAV, "/status")}
 ${stat("per minute (last hour)", num(events.per_minute_last_hour))}
 ${stat("last hour", num(events.last_hour))}
 ${stat("last 24 hours", num(events.last_24h))}
-${stat("total", num(events.total))}
+${stat("total", num(events.total), since)}
 ${stat("kept for replay", num(events.retained), events.oldest_retained_at ? `back to ${ago(events.oldest_retained_at)}` : "")}
 ${stat("latest event", ago(events.last_event_at))}
 </div>
@@ -286,7 +290,7 @@ ${stat("per second (last hour)", String(requests.per_second_last_hour))}
 ${stat("average time (last hour)", ms(requests.avg_ms.last_hour) || "-", requests.avg_ms.last_24h === null ? "" : `${ms(requests.avg_ms.last_24h)} over 24 hours`)}
 ${stat("last hour", num(requests.last_hour))}
 ${stat("last 24 hours", num(requests.last_24h))}
-${stat("total", num(requests.total))}
+${stat("total", num(requests.total), since)}
 ${stat("failed (last 24 hours)", num(requests.failed.last_24h ?? 0), `${num(requests.failed.last_hour ?? 0)} in the last hour`)}
 ${stat("rate limited (last 24 hours)", num(requests.ratelimited.last_24h ?? 0))}
 </div>
@@ -326,7 +330,7 @@ ${feedRows}
 ${typeRows}
 </table></div>
 
-<footer>${num(data.gateway.connections)} connection(s) to this gateway. Ingester up since ${ago(data.ingester.started_at)}. Updated ${esc(new Date(data.generated_at).toUTCString())}, refreshes every 15 seconds. <a href="/status.json">JSON</a><br>${version(data.gateway_commit, data.ingester.commit)}</footer>
+<footer>${data.tracking_since ? `Counting since ${esc(new Date(data.tracking_since).toUTCString())}. ` : ""}${num(data.gateway.connections)} connection(s) to this gateway. Ingester up since ${ago(data.ingester.started_at)}. Updated ${esc(new Date(data.generated_at).toUTCString())}, refreshes every 15 seconds. <a href="/status.json">JSON</a><br>${version(data.gateway_commit, data.ingester.commit)}</footer>
 </main>
 <script>
 const REFRESH_MS = 15000;
