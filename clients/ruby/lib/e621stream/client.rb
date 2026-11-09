@@ -114,7 +114,6 @@ module E621Stream
 
     sig { returns([Integer, String]) }
     def connect_once
-      result = T.let([1000, ""], [Integer, String])
       @connector.connect(options.url) do |connection|
         @connection = connection
         @last_message = now
@@ -129,7 +128,8 @@ module E621Stream
           @connection = nil
         end
       end
-      result
+      # anything but a normal close raises out of read
+      [1000, ""]
     rescue Protocol::WebSocket::ClosedError => e
       [e.code || 1006, e.message]
     rescue StandardError => e

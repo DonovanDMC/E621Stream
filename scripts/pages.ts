@@ -30,9 +30,9 @@ const pages = await Promise.all(files.map(async (file) => {
     const title = /^# (.+)$/m.exec(source)?.[1] ?? name;
     return { name, title, href: name === "index" ? "/" : `/${name}/`, content: await marked.parse(source) };
 }));
+for (const link of NAV) if (link.page && !pages.some(page => page.name === link.page)) throw new Error(`the nav links to pages/${link.page}.md, which doesn't exist`);
 const extra = pages.filter(page => !NAV.some(link => link.page === page.name)).sort((a, b) => a.title.localeCompare(b.title));
 const links: Array<NavLink> = [...NAV, ...extra.map(page => ({ href: page.href, page: page.name, title: page.title }))];
-for (const link of NAV) if (link.page && !pages.some(page => page.name === link.page)) throw new Error(`the nav links to pages/${link.page}.md, which doesn't exist`);
 
 const template = await Bun.file(join(pagesDir, "template.html")).text();
 const commit = Bun.env.GITHUB_SHA ?? Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: root }).stdout.toString().trim();
