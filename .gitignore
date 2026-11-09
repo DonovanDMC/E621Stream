@@ -1,0 +1,9 @@
+/node_modules
+/.vscode
+/.idea
+/.env
+/.env.*
+!/.env.example
+/dist
+/dist-pages
+/logs
