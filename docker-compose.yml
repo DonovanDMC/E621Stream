@@ -1,0 +1,77 @@
+x-app: &app
+  build: .
+  image: ghcr.io/donovandmc/e621stream
+  restart: always
+  init: true
+  env_file: .env
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:8.0.1-alpine3.21
+    # the stream and cursors are worth keeping across restarts, snapshots/auth cache can be evicted under pressure
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy volatile-lru
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 2s
+      retries: 10
+    hostname: redis.e621stream.containers.local
+    labels:
+      - "hostname=redis.e621stream.containers.local"
+
+  # polls e621, there must only ever be one of these
+  ingester:
+    <<: *app
+    environment:
+      - REDIS_URL=redis://redis.e621stream.containers.local:6379
+      - LOGGER=e621stream,ingester,ingester:*,e621
+      - ROLE=ingester
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    volumes:
+      - ./logs:/app/logs
+    hostname: ingester.e621stream.containers.local
+    labels:
+      - "hostname=ingester.e621stream.containers.local"
+
+  # serves websockets, can be scaled
+  gateway:
+    <<: *app
+    environment:
+      - REDIS_URL=redis://redis.e621stream.containers.local:6379
+      - LOGGER=e621stream,gateway,gateway:*
+      - ROLE=gateway
+      - PORT=3000
+      - TRUST_PROXY=true
+    ports:
+      - "127.0.0.1:3621:3000"
+    healthcheck:
+      test: wget -q --spider http://127.0.0.1:3000/health
+      interval: 10s
+      timeout: 2s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    volumes:
+      - ./logs:/app/logs
+    hostname: gateway.e621stream.containers.local
+    labels:
+      - "hostname=gateway.e621stream.containers.local"
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-e621stream
+
+volumes:
+  redis_data:

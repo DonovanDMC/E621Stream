@@ -1,0 +1,48 @@
+{
+  "name": "e621stream",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A semi-live websocket event stream of e621 activity",
+  "license": "MIT",
+  "author": "Donovan_DMC <hewwo@yiff.rocks>",
+  "type": "module",
+  "packageManager": "bun@1.3.10",
+  "main": "src/index.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DonovanDMC/E621Stream"
+  },
+  "homepage": "https://github.com/DonovanDMC/E621Stream#readme",
+  "bugs": {
+    "url": "https://github.com/DonovanDMC/E621Stream/issues"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "build": "bun run scripts/build.ts",
+    "build:pages": "bun run scripts/pages.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "bun test",
+    "client": "bun run scripts/client.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@yiffy/debug": "^0.0.1",
+    "e621": "^3.5.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@types/bun": "^1.3.1",
+    "@uwu-codes/eslint-config": "^2.0.10",
+    "eslint": "^9.39.4",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-unicorn": "^59.0.1",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "globals": "^16.5.0",
+    "jiti": "^2.6.1",
+    "marked": "^18.1.2",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1"
+  }
+}
