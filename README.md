@@ -76,6 +76,11 @@ docker compose exec ingester bun run backfill reset posts # or all
 ### Status
 `/status` has requests, failures, request times, events, feeds and the backfill. `/status.json` has the same data.
 
+### Admin
+`/admin` lists every connected client (name, user, state, subscriptions, ip & when they connected), and can drop connections and ban users. Log in with an e621 username & api key, only the user ids in `ADMIN_USER_IDS` are let in. Logins last `ADMIN_SESSION_HOURS` (12).
+
+Dropped clients get `4012` and banned ones `4013`, the clients don't reconnect after either. Bans are by user id, kept in redis until they're lifted, and drop every connection that user has.
+
 ### Logs
 Each process logs to `logs/<role>-YYYY-MM-DD.log`, and every request to e621 goes to `logs/requests-<role>-YYYY-MM-DD.log`:
 
@@ -98,4 +103,4 @@ bun run client --url wss://e621.stream/ws
 ### Pages
 `pages/<name>.md` becomes `/<name>/`, `pages/index.md` is `/`, and `pages/template.html` is the layout. The favicon is from E621OpenAPI. `bun run build:pages` builds it into `dist-pages/`, and the `Deploy Pages` workflow deploys it with [PagesDeployServer](https://github.com/DonovanDMC/PagesDeployServer) when `pages/` changes.
 
-The reverse proxy sends `/ws`, `/health`, `/stats`, `/info`, `/status` and `/status.json` to the gateway, and everything else to the pages.
+The reverse proxy sends `/ws`, `/health`, `/stats`, `/info`, `/status`, `/status.json` and `/admin` to the gateway, and everything else to the pages.

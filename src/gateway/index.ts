@@ -1,12 +1,14 @@
 import Debug from "@yiffy/debug";
 
-import { authRequired, gitCommit, maxConnectionsPerIP, port, publicURL, trustProxy } from "../config.ts";
+import { adminUserIDs, authRequired, gitCommit, maxConnectionsPerIP, port, publicURL, trustProxy } from "../config.ts";
 import { EVENT_TYPES } from "../events.ts";
 import redis from "../redis.ts";
 
+import { handleAdmin } from "./admin.ts";
 import { parseBasicAuth } from "./auth.ts";
 import { COMPRESSION_TYPES, isCompressionType, type CompressionType } from "./compression.ts";
 import { hubStats, startHub } from "./hub.ts";
+import { startModeration } from "./moderation.ts";
 import { connectionsChanged, startPresence } from "./presence.ts";
 import { startPrivate } from "./private.ts";
 import { PROTOCOL_VERSION } from "./protocol.ts";
@@ -28,6 +30,9 @@ export function startGateway(): void {
         port,
         fetch(req, srv) {
             const url = new URL(req.url);
+            if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
+                return handleAdmin(req, clientIP(req, srv)).catch((err: unknown) => new Response(`admin unavailable: ${String(err)}`, { status: 503 }));
+            }
             switch (url.pathname) {
                 case "/ws": {
                     const ip = clientIP(req, srv);
@@ -102,9 +107,11 @@ export function startGateway(): void {
 
     void startHub();
     void startPrivate().catch((err: unknown) => { Debug("gateway:private", `couldn't start: ${String(err)}`); });
+    void startModeration().catch((err: unknown) => { Debug("gateway:admin", `couldn't start: ${String(err)}`); });
     startPresence();
     setInterval(() => {
         for (const session of sessions) void session.recheckAuth().catch(() => null);
     }, 60_000);
     Debug("gateway", `listening on ${server.url.href}`);
+    Debug("gateway:admin", adminUserIDs.size === 0 ? "no ADMIN_USER_IDS set, nobody can log in to /admin" : `admins: ${[...adminUserIDs].map(id => `#${id}`).join(", ")}`);
 }

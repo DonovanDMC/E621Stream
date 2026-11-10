@@ -191,6 +191,33 @@ function version(gateway: string, ingester: string | null): string {
 
 const STATUS_CLASS: Record<string, string> = { done: "ok", running: "run", failed: "bad", waiting: "dim", pending: "dim" };
 
+export const PAGE_CSS = `
+:root { --bg: #1c1c21; --surface: #242424; --border: #3e4346; --text: #bfbfbf; --heading: #fff; --link: #a9cbea; --ok: #8fd18f; --bad: #e69999; --run: #a9cbea; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: sans-serif; line-height: 1.5; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+a { color: var(--link); }
+h1, h2 { color: var(--heading); }
+h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border-radius: 4px; padding: 12px; }
+.stat .value { color: var(--heading); font-size: 1.5em; font-variant-numeric: tabular-nums; }
+.stat .label { font-size: 0.85em; }
+.stat .sub { font-size: 0.8em; opacity: 0.7; }
+.chart { width: 100%; height: 64px; margin-top: 12px; fill: var(--run); }
+.chart .bad { fill: var(--bad); }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.9em; }
+th, td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
+th { color: var(--heading); background: var(--surface); }
+td.n { text-align: right; font-variant-numeric: tabular-nums; }
+td.detail { max-width: 360px; overflow-wrap: anywhere; }
+.ok { color: var(--ok); } .bad { color: var(--bad); } .run { color: var(--run); } .dim { opacity: 0.6; }
+.bar { display: inline-block; width: 80px; height: 8px; background: var(--border); border-radius: 4px; margin-right: 6px; vertical-align: middle; overflow: hidden; }
+.bar div { height: 100%; background: var(--ok); }
+footer { margin-top: 32px; font-size: 0.85em; opacity: 0.7; }
+`;
+
 export async function statusPage(): Promise<string> {
     const data = await status() as {
         backfill: Array<Backfill> | { error: string };
@@ -240,30 +267,7 @@ export async function statusPage(): Promise<string> {
 <title>Status - E621Stream</title>
 <link rel="icon" href="/favicon.ico">
 <style>
-:root { --bg: #1c1c21; --surface: #242424; --border: #3e4346; --text: #bfbfbf; --heading: #fff; --link: #a9cbea; --ok: #8fd18f; --bad: #e69999; --run: #a9cbea; }
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font-family: sans-serif; line-height: 1.5; }
-main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
-a { color: var(--link); }
-h1, h2 { color: var(--heading); }
-h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
-.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
-.stat { background: var(--surface); border-radius: 4px; padding: 12px; }
-.stat .value { color: var(--heading); font-size: 1.5em; font-variant-numeric: tabular-nums; }
-.stat .label { font-size: 0.85em; }
-.stat .sub { font-size: 0.8em; opacity: 0.7; }
-.chart { width: 100%; height: 64px; margin-top: 12px; fill: var(--run); }
-.chart .bad { fill: var(--bad); }
-.table-wrap { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.9em; }
-th, td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
-th { color: var(--heading); background: var(--surface); }
-td.n { text-align: right; font-variant-numeric: tabular-nums; }
-td.detail { max-width: 360px; overflow-wrap: anywhere; }
-.ok { color: var(--ok); } .bad { color: var(--bad); } .run { color: var(--run); } .dim { opacity: 0.6; }
-.bar { display: inline-block; width: 80px; height: 8px; background: var(--border); border-radius: 4px; margin-right: 6px; vertical-align: middle; overflow: hidden; }
-.bar div { height: 100%; background: var(--ok); }
-footer { margin-top: 32px; font-size: 0.85em; opacity: 0.7; }
+${PAGE_CSS}
 ${NAV_CSS}
 </style>
 </head>

@@ -14,5 +14,7 @@
 | 4009 | too slow, reconnect with your last cursor |
 | 4010 | too many connections (per ip or per account) |
 | 4011 | your credentials stopped working |
+| 4012 | disconnected by an admin |
+| 4013 | banned from using the service |
 
-The clients won't reconnect after 4001, 4002, 4004, 4005, 4006, 4007 or 4011, since trying again won't help.
+The clients won't reconnect after 4001, 4002, 4004, 4005, 4006, 4007, 4011, 4012 or 4013, since trying again won't help.

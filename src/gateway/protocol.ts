@@ -13,6 +13,8 @@ export const CloseCodes = {
     SLOW_CONSUMER: 4009,
     TOO_MANY_CONNECTIONS: 4010,
     AUTHENTICATION_EXPIRED: 4011,
+    DISCONNECTED: 4012,
+    BANNED: 4013,
 } as const;
 export type CloseCode = typeof CloseCodes[keyof typeof CloseCodes];
 

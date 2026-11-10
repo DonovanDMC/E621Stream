@@ -1,3 +1,5 @@
+import Debug from "@yiffy/debug";
+
 import { authCacheSeconds, redisPrefix } from "../config.ts";
 import { authQueue, AuthError, createClient, request } from "../e621.ts";
 import redis from "../redis.ts";
@@ -46,6 +48,7 @@ export async function verify(credentials: Credentials): Promise<VerifyResult> {
         if (!(err instanceof AuthError)) throw err;
         result = { ok: false, reason: "invalid credentials" };
     }
+    Debug("gateway:auth", result.ok ? `checked ${credentials.username} with e621, they're #${result.user.id}` : `checked ${credentials.username} with e621: ${result.reason}`);
     await redis.set(key, JSON.stringify(result), "EX", result.ok ? authCacheSeconds : NEGATIVE_CACHE_SECONDS);
     return result;
 }

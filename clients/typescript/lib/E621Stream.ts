@@ -53,6 +53,8 @@ const FATAL = new Set<number>([
     CloseCodes.INVALID_SUBSCRIPTION,
     CloseCodes.INVALID_CURSOR,
     CloseCodes.AUTHENTICATION_EXPIRED,
+    CloseCodes.DISCONNECTED,
+    CloseCodes.BANNED,
 ]);
 const MAX_DELAY_MS = 60_000;
 const HEARTBEAT_MS = 30_000;

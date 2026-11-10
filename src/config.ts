@@ -25,6 +25,9 @@ export const streamKey = `${redisPrefix}:events`;
 export const cursorKey = `${redisPrefix}:cursors`;
 export const feedsKey = `${redisPrefix}:feeds`;
 export const clientsKey = `${redisPrefix}:clients`;
+export const clientListKey = `${redisPrefix}:client_list`;
+export const bansKey = `${redisPrefix}:bans`;
+export const adminChannel = `${redisPrefix}:admin`;
 export const idleKey = `${redisPrefix}:ingester:idle`;
 export const dataKey = `${redisPrefix}:data`;
 export const databaseURL = Bun.env.DATABASE_URL ?? "postgres://e621stream:e621stream@postgres:5432/e621stream";
@@ -63,6 +66,10 @@ export const identifyTimeoutMS = int("IDENTIFY_TIMEOUT_MS", 10_000);
 export const maxConnectionsPerIP = int("MAX_CONNECTIONS_PER_IP", 10);
 export const maxConnectionsPerUser = int("MAX_CONNECTIONS_PER_USER", 5);
 export const authCacheSeconds = int("AUTH_CACHE_SECONDS", 30 * 60);
+
+// nobody can log in to /admin if this is empty
+export const adminUserIDs = new Set(list("ADMIN_USER_IDS").map(Number).filter(id => Number.isSafeInteger(id) && id > 0));
+export const adminSessionHours = int("ADMIN_SESSION_HOURS", 12);
 export const maxSubscriptions = int("MAX_SUBSCRIPTIONS", 50);
 export const maxClientMessagesPerMinute = int("MAX_CLIENT_MESSAGES_PER_MINUTE", 60);
 export const maxBufferedBytes = int("MAX_BUFFERED_BYTES", 16 * 1024 * 1024);

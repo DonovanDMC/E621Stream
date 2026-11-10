@@ -17,7 +17,8 @@ import redis, { type StreamEntry } from "../redis.ts";
 
 import { verify, type Credentials, type E621User } from "./auth.ts";
 import { StreamCompressor, type CompressionType } from "./compression.ts";
-import { compile, FilterError, matches, type CompiledSubscription } from "./filter.ts";
+import { compile, FilterError, matches, type CompiledSubscription, type Subscription } from "./filter.ts";
+import { isBanned } from "./moderation.ts";
 import { removePrivate, updatePrivate, type PrivateMember } from "./private.ts";
 import { CloseCodes, compareIds, parseCursor, PROTOCOL_VERSION, type ClientMessage, type CloseCode, type IdentifyPayload } from "./protocol.ts";
 
@@ -30,7 +31,7 @@ export interface SocketData {
     session?: Session;
 }
 
-type State = "pending" | "replaying" | "live" | "closed";
+export type State = "pending" | "replaying" | "live" | "closed";
 
 const MAX_BACKLOG = 50_000;
 
@@ -67,6 +68,7 @@ export class Session {
     private privateMember: PrivateMember | null = null;
     private subscriptions: Array<CompiledSubscription> = [];
     client: string | null = null;
+    readonly connectedAt = new Date();
     readonly id = randomUUID();
     state: State = "pending";
     user: E621User | null = null;
@@ -136,11 +138,13 @@ export class Session {
 
         const credentials = d.auth === undefined ? this.ws.data.headerAuth : parseCredentials(d.auth);
         if (d.auth !== undefined && !credentials) {
+            Debug("gateway:auth", `${this.id} from ${this.ws.data.ip} sent malformed auth`);
             this.close(CloseCodes.DECODE_ERROR, "invalid auth");
             return;
         }
         if (authRequired || credentials) {
             if (!credentials) {
+                Debug("gateway:auth", `${this.id} from ${this.ws.data.ip} didn't send any credentials`);
                 this.close(CloseCodes.AUTHENTICATION_FAILED, "auth required");
                 return;
             }
@@ -148,16 +152,24 @@ export class Session {
             try {
                 result = await verify(credentials);
             } catch (err) {
-                Debug("gateway:auth", `couldn't verify ${credentials.username}: ${String(err)}`);
+                Debug("gateway:auth", `couldn't verify ${credentials.username} from ${this.ws.data.ip}: ${String(err)}`);
                 this.close(CloseCodes.UNKNOWN_ERROR, "couldn't reach e621");
                 return;
             }
             if (this.is("closed")) return;
             if (!result.ok) {
+                Debug("gateway:auth", `${credentials.username} from ${this.ws.data.ip} failed verification: ${result.reason}`);
                 this.close(CloseCodes.AUTHENTICATION_FAILED, result.reason);
                 return;
             }
+            if (await isBanned(result.user.id)) {
+                Debug("gateway:auth", `${result.user.name} #${result.user.id} from ${this.ws.data.ip} is banned`);
+                this.close(CloseCodes.BANNED, "banned");
+                return;
+            }
+            if (this.is("closed")) return;
             if (maxConnectionsPerUser > 0 && (connectionsByUser.get(result.user.id) ?? 0) >= maxConnectionsPerUser) {
+                Debug("gateway:auth", `${result.user.name} #${result.user.id} from ${this.ws.data.ip} is already at ${maxConnectionsPerUser} connection(s)`);
                 this.close(CloseCodes.TOO_MANY_CONNECTIONS, `too many connections (max ${maxConnectionsPerUser})`);
                 return;
             }
@@ -251,6 +263,10 @@ export class Session {
         return true;
     }
 
+    activeSubscriptions(): Array<Subscription> {
+        return this.subscriptions.map(sub => sub.source);
+    }
+
     cleanup(): void {
         this.state = "closed";
         clearTimeout(this.identifyTimer);
@@ -263,6 +279,7 @@ export class Session {
 
     close(code: CloseCode, reason: string): void {
         if (this.state === "closed") return;
+        Debug("gateway:session", `closing ${this.id} from ${this.ws.data.ip} (user: ${this.user ? `${this.user.name} #${this.user.id}` : "none"}, client: ${this.client ?? "unknown"}): ${code} ${reason}`);
         this.send({ op: "error", d: { code, message: reason } });
         this.state = "closed";
         const finish = (): void => { this.ws.close(code, reason); };
@@ -330,6 +347,9 @@ export class Session {
     async recheckAuth(): Promise<void> {
         if (!this.credentials || this.state === "closed") return;
         const result = await verify(this.credentials);
-        if (!result.ok) this.close(CloseCodes.AUTHENTICATION_EXPIRED, result.reason);
+        if (!result.ok) {
+            Debug("gateway:auth", `${this.credentials.username} on ${this.id} stopped passing verification: ${result.reason}`);
+            this.close(CloseCodes.AUTHENTICATION_EXPIRED, result.reason);
+        }
     }
 }
