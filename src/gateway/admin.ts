@@ -78,6 +78,12 @@ button.bad { color: var(--bad); }
 .subs input:checked ~ .more { display: block; }
 .subs label { display: block; color: var(--link); cursor: pointer; }
 .subs label::after { content: "▸ " attr(data-more); }
+details.filter { display: inline-block; }
+details.filter summary { list-style: none; cursor: pointer; }
+details.filter summary::-webkit-details-marker { display: none; }
+details.filter summary::after { content: "›"; display: inline-block; margin-left: 6px; color: var(--link); transition: transform 0.1s; }
+details.filter[open] summary::after { transform: rotate(90deg); }
+details.filter > code { display: block; padding-left: 16px; overflow-wrap: anywhere; }
 .subs input:checked ~ label::after { content: "▾ show less"; }
 </style>
 </head>
@@ -113,7 +119,7 @@ const button = (action: string, fields: Record<string, string | number>, label: 
 
 function subscriptions(id: string, list: ListedClient["subscriptions"]): string {
     if (list.length === 0) return "<span class=\"dim\">none</span>";
-    const items = list.map(sub => `<code>${esc(sub.filter ? JSON.stringify(sub) : sub.type)}</code>`);
+    const items = list.map(sub => sub.filter ? `<details class="filter"><summary><code>${esc(sub.type)}</code></summary><code>${esc(JSON.stringify(sub.filter))}</code></details>` : `<code>${esc(sub.type)}</code>`);
     if (items.length <= 3) return items.join("<br>");
     return `<div class="subs"><input type="checkbox" id="subs-${esc(id)}">${items.slice(0, 3).join("<br>")}<div class="more">${items.slice(3).join("<br>")}</div><label for="subs-${esc(id)}" data-more="${items.length - 3} more"></label></div>`;
 }
