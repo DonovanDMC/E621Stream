@@ -12,14 +12,14 @@ import {
     replayBatchSize,
     streamKey,
 } from "../config.ts";
-import { dispatchFrame, EVENT_TYPES, parseEntry, type PrivateEventType, type StreamEvent } from "../events.ts";
+import { dispatchFrame, EVENT_TYPES, parseEntry, type StreamEvent } from "../events.ts";
 import redis, { type StreamEntry } from "../redis.ts";
 
 import { verify, type Credentials, type E621User } from "./auth.ts";
 import { StreamCompressor, type CompressionType } from "./compression.ts";
 import { compile, FilterError, matches, type CompiledSubscription, type Subscription } from "./filter.ts";
 import { isBanned } from "./moderation.ts";
-import { removePrivate, updatePrivate, type PrivateMember } from "./private.ts";
+import { removePrivate, updatePrivate, type PrivateEvent, type PrivateMember } from "./private.ts";
 import { CloseCodes, compareIds, parseCursor, PROTOCOL_VERSION, type ClientMessage, type CloseCode, type IdentifyPayload } from "./protocol.ts";
 
 import type { ServerWebSocket } from "bun";
@@ -119,9 +119,9 @@ export class Session {
         return true;
     }
 
-    private deliverPrivate(type: PrivateEventType, data: { created_at?: string; id: number }): void {
+    private deliverPrivate({ data, id, time, type }: PrivateEvent): void {
         if (this.state === "pending" || this.state === "closed" || !this.privateMember?.privateTypes.has(type)) return;
-        this.send({ op: "dispatch", id: `${type}:${data.id}`, type, time: data.created_at ?? new Date().toISOString(), private: true, data });
+        this.send({ op: "dispatch", id, type, time, private: true, data });
     }
 
     private async identify(d: IdentifyPayload | undefined): Promise<void> {
@@ -256,7 +256,7 @@ export class Session {
         }
         this.subscriptions = subs;
         if (this.credentials && this.user) {
-            this.privateMember ??= { credentials: this.credentials, userId: this.user.id, privateTypes, deliverPrivate: (type, data): void => { this.deliverPrivate(type, data); } };
+            this.privateMember ??= { credentials: this.credentials, userId: this.user.id, privateTypes, deliverPrivate: (event): void => { this.deliverPrivate(event); } };
             this.privateMember.privateTypes = privateTypes;
             updatePrivate(this.privateMember);
         }

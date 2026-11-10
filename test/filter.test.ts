@@ -149,6 +149,8 @@ describe("id filters", () => {
         expect(compile("*").privateTypes.size).toBe(0);
         expect(compile("dmail.create").types.size).toBe(0);
         expect(() => compile({ type: "dmail.create", filter: { user_ids: [1] } })).toThrow(FilterError);
+        expect([...compile("private_post_set.*").privateTypes]).toEqual(["private_post_set.add_posts", "private_post_set.remove_posts"]);
+        expect(compile("post_set.*").privateTypes.size).toBe(0);
     });
 
     test("replacement destroys filter by the post and who deleted it", () => {

@@ -24,6 +24,6 @@ module E621Stream
 
     # Polled with your own credentials and only sent to you. They have to be subscribed to by name, `*` doesn't include
     # them.
-    PRIVATE_EVENT_TYPES = %w[dmail.create].freeze
+    PRIVATE_EVENT_TYPES = %w[dmail.create private_post_set.add_posts private_post_set.remove_posts].freeze
   end
 end

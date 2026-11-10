@@ -123,6 +123,7 @@ function eventMap(): string {
         else if (versions.has(type)) data = record(versions.get(type)!.slice(0, -".create".length));
         else if (members.has(type)) data = `Record<"${members.get(type)!}", ${record(members.get(type)!)}> & { post_ids: Array<number> }`;
         else if (type === "pool.add_posts" || type === "pool.remove_posts") data = "{ pool_version: PoolVersion; post_ids: Array<number> }";
+        else if (type === "private_post_set.add_posts" || type === "private_post_set.remove_posts") data = `{ post_ids: Array<number>; post_set: ${record("post_set")} }`;
         else if (updates.has(type)) {
             const source = updates.get(type)!;
             data = `Update<"${source.resource}", ${record(source.resource)}, ${source.fields.map(field => `"${field}"`).join(" | ")}>`;

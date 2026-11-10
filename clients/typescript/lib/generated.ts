@@ -862,4 +862,6 @@ export interface EventDataMap {
     "wiki_page.update": WikiPageVersion;
     "wiki_page_version.create": WikiPageVersion;
     "dmail.create": DMail;
+    "private_post_set.add_posts": { post_ids: Array<number>; post_set: PostSet };
+    "private_post_set.remove_posts": { post_ids: Array<number>; post_set: PostSet };
 }

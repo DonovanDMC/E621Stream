@@ -96,7 +96,7 @@ export const EVENT_TYPES = [
 export type EventType = typeof EVENT_TYPES[number];
 
 // polled with each user's own credentials, `*` doesn't include these
-export const PRIVATE_EVENT_TYPES = ["dmail.create"] as const;
+export const PRIVATE_EVENT_TYPES = ["dmail.create", "private_post_set.add_posts", "private_post_set.remove_posts"] as const;
 export type PrivateEventType = typeof PRIVATE_EVENT_TYPES[number];
 const privateTypeSet = new Set<string>(PRIVATE_EVENT_TYPES);
 export const isPrivateEventType = (type: string): type is PrivateEventType => privateTypeSet.has(type);

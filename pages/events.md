@@ -114,9 +114,11 @@ These are polled with your own credentials while you're connected, and only sent
 | event | data |
 |---|---|
 | `dmail.create` | a dmail, sent or received (check `from_id`/`to_id`) |
+| `private_post_set.add_posts`, `private_post_set.remove_posts` | `{ post_set, post_ids }`, posts added to or removed from one of your private sets |
 
-- They have to be subscribed to by name (or `dmail.*`), `*` doesn't include them since each one costs a request per user.
+- They have to be subscribed to by name (or `dmail.*`/`private_post_set.*`), `*` doesn't include them since each one costs a request per user.
 - They can't be filtered.
-- Your mailbox is checked about once a minute.
+- Your mailbox & sets are checked about once a minute.
 - They aren't stored, so they can't be replayed, and their `id` (`dmail.create:2642532`) isn't a cursor. They have `private: true`.
-- The newest one you've been sent is remembered, so reconnecting sends whatever you missed. The first time, it starts from your newest dmail. After 90 days away it starts over.
+- The newest dmail you've been sent is remembered, so reconnecting sends whatever you missed. The first time, it starts from your newest dmail. After 90 days away it starts over.
+- Sets work like the public ones: the first time we see a set nothing is sent, after that changes are compared against the last copy. Sets that go public stop sending these, `post_set.*` covers them then.

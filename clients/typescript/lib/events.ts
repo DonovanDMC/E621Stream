@@ -100,6 +100,8 @@ export type EventType = typeof EVENT_TYPES[number];
 
 export const PRIVATE_EVENT_TYPES = [
     "dmail.create",
+    "private_post_set.add_posts",
+    "private_post_set.remove_posts",
 ] as const;
 
 export type PrivateEventType = typeof PRIVATE_EVENT_TYPES[number];

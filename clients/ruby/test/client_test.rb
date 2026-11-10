@@ -116,6 +116,6 @@ class ClientTest < Minitest::Test
 
   def test_event_types_match_the_server
     assert_includes(E621Stream::Events::EVENT_TYPES, "post.create")
-    assert_equal(%w[dmail.create], E621Stream::Events::PRIVATE_EVENT_TYPES)
+    assert_equal(%w[dmail.create private_post_set.add_posts private_post_set.remove_posts], E621Stream::Events::PRIVATE_EVENT_TYPES)
   end
 end
