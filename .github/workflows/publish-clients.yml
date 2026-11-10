@@ -46,7 +46,7 @@ jobs:
             - uses: actions/checkout@v6
             - uses: ruby/setup-ruby@v1
               with:
-                  ruby-version: .ruby-version
+                  ruby-version: "3.4"
                   working-directory: clients/ruby
                   bundler-cache: true
             # trusted publishing only creates a new gem when the workflow says which account owns it, and
