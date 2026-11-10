@@ -74,6 +74,11 @@ form.inline { display: inline; }
 input { padding: 6px 8px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font: inherit; }
 button { padding: 4px 10px; background: var(--surface); color: var(--heading); border: 1px solid var(--border); border-radius: 4px; font: inherit; cursor: pointer; }
 button.bad { color: var(--bad); }
+.subs input, .subs .more { display: none; }
+.subs input:checked ~ .more { display: block; }
+.subs label { display: block; color: var(--link); cursor: pointer; }
+.subs label::after { content: "▸ " attr(data-more); }
+.subs input:checked ~ label::after { content: "▾ show less"; }
 </style>
 </head>
 <body>
@@ -106,10 +111,11 @@ function ago(iso: string): string {
 
 const button = (action: string, fields: Record<string, string | number>, label: string, confirm?: string): string => `<form class="inline" method="post" action="/admin/${action}"${confirm ? ` data-confirm="${esc(confirm)}" onsubmit="return confirm(this.dataset.confirm)"` : ""}>${Object.entries(fields).map(([name, value]) => `<input type="hidden" name="${name}" value="${esc(value)}">`).join("")}<button type="submit" class="bad">${label}</button></form>`;
 
-function subscriptions(list: ListedClient["subscriptions"]): string {
+function subscriptions(id: string, list: ListedClient["subscriptions"]): string {
     if (list.length === 0) return "<span class=\"dim\">none</span>";
     const items = list.map(sub => `<code>${esc(sub.filter ? JSON.stringify(sub) : sub.type)}</code>`);
-    return items.length <= 3 ? items.join("<br>") : `${items.slice(0, 3).join("<br>")}<details><summary>${items.length - 3} more</summary>${items.slice(3).join("<br>")}</details>`;
+    if (items.length <= 3) return items.join("<br>");
+    return `<div class="subs"><input type="checkbox" id="subs-${esc(id)}">${items.slice(0, 3).join("<br>")}<div class="more">${items.slice(3).join("<br>")}</div><label for="subs-${esc(id)}" data-more="${items.length - 3} more"></label></div>`;
 }
 
 async function adminPage(admin: Admin, notice?: string): Promise<Response> {
@@ -117,7 +123,7 @@ async function adminPage(admin: Admin, notice?: string): Promise<Response> {
     const clients = lists.flatMap(list => JSON.parse(list) as Array<ListedClient>).sort((a, b) => a.connected_at.localeCompare(b.connected_at));
     const clientRows = clients.map(c => `<tr><td>${c.client ? esc(c.client) : "<span class=\"dim\">unnamed</span>"}</td>
 <td>${c.user ? `<a href="https://e621.net/users/${c.user_id}">${esc(c.user)}</a>` : "<span class=\"dim\">anonymous</span>"}</td>
-<td class="${STATE_CLASS[c.state]}">${STATE_LABEL[c.state]}</td><td>${subscriptions(c.subscriptions)}</td>
+<td class="${STATE_CLASS[c.state]}">${STATE_LABEL[c.state]}</td><td>${subscriptions(c.session_id, c.subscriptions)}</td>
 <td>${esc(c.ip)}</td><td title="${esc(c.connected_at)}">${ago(c.connected_at)}</td>
 <td>${button("drop", { session_id: c.session_id }, "Drop")} ${c.user_id === null || adminUserIDs.has(c.user_id) ? "" : button("ban", { user_id: c.user_id, name: c.user ?? "" }, "Ban", `Ban ${c.user ?? c.user_id}? This drops all of their connections.`)}</td></tr>`).join("");
     const banRows = bans.map(b => `<tr><td><a href="https://e621.net/users/${b.user_id}">${esc(b.name ?? b.user_id)}</a></td><td>${b.reason ? esc(b.reason) : ""}</td><td>${esc(b.banned_by)}</td><td title="${esc(b.banned_at)}">${ago(b.banned_at)}</td><td>${button("unban", { user_id: b.user_id }, "Unban")}</td></tr>`).join("");
