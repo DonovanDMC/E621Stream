@@ -3,6 +3,7 @@
 
 require("async")
 require("async/http/endpoint")
+require("async/http/internet")
 require("async/websocket/client")
 
 module E621Stream
@@ -26,6 +27,25 @@ module E621Stream
       def connect(url, &block)
         endpoint = Async::HTTP::Endpoint.parse(url, alpn_protocols: Async::HTTP::Protocol::HTTP11.names)
         Async::WebSocket::Client.connect(endpoint, &block)
+      end
+
+      # Gets the websocket url from the site's /info, unless it's one already.
+      sig { params(url: String).returns(String) }
+      def websocket_url(url)
+        return url if url.match?(%r{\Awss?://}i)
+
+        info = URI.join(url, "/info").to_s
+        internet = Async::HTTP::Internet.new
+        response = internet.get(info)
+        raise("#{info} returned #{response.status}") unless response.success?
+
+        websocket = JSON.parse(response.read)["websocket"]
+        raise("#{info} didn't have a websocket url") unless websocket.is_a?(String)
+
+        URI.join(url, websocket).to_s
+      ensure
+        response&.close
+        internet&.close
       end
     end
 
@@ -53,7 +73,7 @@ module E621Stream
         connector:     Connector,
       ).void
     end
-    def initialize(subscriptions:, username: nil, api_key: nil, token: nil, url: "wss://e621.stream/ws", client: nil, cursor: nil, reconnect: true, connector: Connector.new)
+    def initialize(subscriptions:, username: nil, api_key: nil, token: nil, url: "https://e621.stream", client: nil, cursor: nil, reconnect: true, connector: Connector.new)
       @options = T.let(Options.new(subscriptions: subscriptions, username: username, api_key: api_key, token: token, url: url, client: client, cursor: cursor, reconnect: reconnect), Options)
       @connector = connector
       @cursor = T.let(cursor&.to_s, T.nilable(String))
@@ -115,7 +135,8 @@ module E621Stream
 
     sig { returns([Integer, String]) }
     def connect_once
-      @connector.connect(options.url) do |connection|
+      # fetched every time, so it can move
+      @connector.connect(@connector.websocket_url(options.url)) do |connection|
         @connection = connection
         @last_message = now
         heartbeat = Async { heartbeat_loop(connection) }

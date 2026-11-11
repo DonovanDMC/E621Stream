@@ -31,10 +31,17 @@ class FakeSocket extends EventTarget {
     }
 }
 
+const infoURLs: Array<string> = [];
+const fakeFetch = (async (url: URL) => {
+    infoURLs.push(url.href);
+    return Response.json({ websocket: "wss://somewhere.test/ws" });
+}) as unknown as typeof fetch;
+
 const tick = (ms = 0): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 function stream(options: Partial<ConstructorParameters<typeof E621Stream>[0]> = {}): E621Stream {
     FakeSocket.sockets = [];
-    return new E621Stream({ auth: { username: "someone", apiKey: "key" }, subscriptions: ["post.create"], WebSocket: FakeSocket as unknown as typeof WebSocket, ...options });
+    infoURLs.length = 0;
+    return new E621Stream({ auth: { username: "someone", apiKey: "key" }, subscriptions: ["post.create"], WebSocket: FakeSocket as unknown as typeof WebSocket, fetch: fakeFetch, ...options });
 }
 const dispatch = (id: string, type = "post.create", extra = {}): object => ({ op: "dispatch", id, type, time: "2026-11-09T00:00:00Z", data: { post: { id: 1 } }, ...extra });
 
@@ -43,6 +50,31 @@ describe("E621Stream", () => {
         stream({ client: "tests" }).connect();
         await tick();
         expect(FakeSocket.sockets[0]!.sent[0]).toEqual({ op: "identify", d: { auth: { username: "someone", api_key: "key" }, client: "tests", subscriptions: ["post.create"] } });
+    });
+
+    test("gets the websocket url from /info", async () => {
+        stream({ url: "https://e621.stream" }).connect();
+        await tick();
+        expect(infoURLs).toEqual(["https://e621.stream/info"]);
+        expect(FakeSocket.sockets[0]!.url).toBe("wss://somewhere.test/ws");
+    });
+
+    test("connects to a websocket url directly", async () => {
+        stream({ url: "ws://127.0.0.1:3000/ws" }).connect();
+        await tick();
+        expect(infoURLs).toEqual([]);
+        expect(FakeSocket.sockets[0]!.url).toBe("ws://127.0.0.1:3000/ws");
+    });
+
+    test("retries when /info fails", async () => {
+        const client = stream({ fetch: (async () => new Response(null, { status: 502 })) as unknown as typeof fetch });
+        const errors: Array<string> = [], reconnecting: Array<number> = [];
+        client.on("error", err => errors.push(err.message)).on("reconnecting", ({ attempt }) => reconnecting.push(attempt)).connect();
+        await tick();
+        expect(errors).toEqual(["https://e621.stream/info returned 502"]);
+        expect(reconnecting).toEqual([1]);
+        expect(FakeSocket.sockets).toHaveLength(0);
+        client.close();
     });
 
     test("sends events to dispatch and their type's listeners", async () => {

@@ -11,12 +11,12 @@
 # Released under the MIT License.
 # Copyright, 2025, by Samuel Williams.
 #
-# pkg:gem/async-http#lib/async/http/protocol/defaulton.rb:6
+# pkg:gem/async-http#lib/async/http/protocol/configurable.rb:6
 module Async; end
 
 # @namespace
 #
-# pkg:gem/async-http#lib/async/http/protocol/defaulton.rb:7
+# pkg:gem/async-http#lib/async/http/protocol/configurable.rb:7
 module Async::HTTP; end
 
 # @namespace
@@ -313,9 +313,88 @@ end
 # pkg:gem/async-http#lib/async/http/endpoint.rb:24
 Async::HTTP::Endpoint::SCHEMES = T.let(T.unsafe(nil), Hash)
 
+# A high-level HTTP client for making requests to any URL, managing a pool of persistent connections keyed by host.
+#
+# pkg:gem/async-http#lib/async/http/internet.rb:17
+class Async::HTTP::Internet
+  # Initialize the internet client.
+  # @parameter options [Hash] Options to pass to the underlying {Client} instances.
+  #
+  # pkg:gem/async-http#lib/async/http/internet.rb:20
+  def initialize(**options); end
+
+  # Make a request to the internet with the given `method` and `url`.
+  #
+  # If you provide non-frozen headers, they may be mutated.
+  #
+  # @parameter method [String] The request method, e.g. `GET`.
+  # @parameter url [String] The URL to request, e.g. `https://www.codeotaku.com`.
+  # @parameter headers [Hash | Protocol::HTTP::Headers] The headers to send with the request.
+  # @parameter body [String | Protocol::HTTP::Body] The body to send with the request.
+  #
+  # pkg:gem/async-http#lib/async/http/internet.rb:48
+  def call(verb, url, *arguments, **options, &block); end
+
+  # Get or create a client for the given endpoint.
+  # @parameter endpoint [Endpoint] The endpoint to connect to.
+  # @returns [Client] A client suitable for making requests to the endpoint.
+  #
+  # pkg:gem/async-http#lib/async/http/internet.rb:32
+  def client_for(endpoint); end
+
+  # A cache of clients.
+  # @attribute [Hash(URI, Client)]
+  #
+  # pkg:gem/async-http#lib/async/http/internet.rb:27
+  def clients; end
+
+  # Close all cached clients and release their resources.
+  #
+  # pkg:gem/async-http#lib/async/http/internet.rb:69
+  def close; end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def connect(url, *arguments, **options, &block); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def delete(url, *arguments, **options, &block); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def get(url, *arguments, **options, &block); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def head(url, *arguments, **options, &block); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def options(url, *arguments, **options, &block); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def patch(url, *arguments, **options, &block); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def post(url, *arguments, **options, &block); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def put(url, *arguments, **options, &block); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def query(url, *arguments, **options, &block); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:78
+  def trace(url, *arguments, **options, &block); end
+
+  protected
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:91
+  def host_key(endpoint); end
+
+  # pkg:gem/async-http#lib/async/http/internet.rb:85
+  def make_client(endpoint); end
+end
+
 # A protocol specifies a way in which to communicate with a remote peer.
 #
-# pkg:gem/async-http#lib/async/http/protocol/defaulton.rb:8
+# pkg:gem/async-http#lib/async/http/protocol/configurable.rb:8
 module Async::HTTP::Protocol; end
 
 # Provides a `new` method that creates a {Configured} wrapper, allowing protocols to be instantiated with custom options.

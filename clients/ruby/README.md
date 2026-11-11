@@ -28,7 +28,7 @@ Instead of `username:` & `api_key:`, you can pass `token:` with a token from [/a
 
 `on("post.create")` listens for one type, `on(:dispatch)` for everything. Events have `id`, `type`, `time` and `data` (the record as the api returns it), see [Events](https://e621.stream/events/). There's also `:ready`, `:replay_complete`, `:subscribed`, `:reconnecting`, `:close` and `:error`.
 
-It reconnects when the connection drops (`reconnect: false` turns that off), and picks up from `client.cursor`. Pass `cursor:` to replay from an event id or ms timestamp. `client.subscribe([...])` changes subscriptions. Private events like `dmail.create` have to be subscribed to by name.
+It reconnects when the connection drops (`reconnect: false` turns that off), and picks up from `client.cursor`. Pass `cursor:` to replay from an event id or ms timestamp. `url:` is the site (`https://e621.stream`), the websocket url comes from its `/info`, or pass a `ws://`/`wss://` url to connect to it directly. `client.subscribe([...])` changes subscriptions. Private events like `dmail.create` have to be subscribed to by name.
 
 ```sh
 bundle exec rake # rubocop, zeitwerk, tests & sorbet

@@ -33,15 +33,26 @@ class FakeConnection
 end
 
 class FakeConnector < E621Stream::Client::Connector
-  attr_reader(:connections)
+  attr_reader(:connections, :urls)
+  attr_accessor(:url_errors)
 
   def initialize(*scripts)
     super()
     @scripts = scripts
     @connections = []
+    @urls = []
+    @url_errors = []
   end
 
-  def connect(_url)
+  def websocket_url(url)
+    error = @url_errors.shift
+    raise(error) if error
+
+    url.start_with?("ws") ? url : "wss://somewhere.test/ws"
+  end
+
+  def connect(url)
+    @urls << url
     connection = FakeConnection.new(@scripts.shift || [Protocol::WebSocket::ClosedError.new("done", E621Stream::CloseCodes::AUTHENTICATION_FAILED)])
     @connections << connection
     yield(connection)
@@ -67,6 +78,27 @@ class ClientTest < Minitest::Test
     connector = FakeConnector.new([HELLO, *fatal])
     client(connector, client: "tests").run
     assert_equal({ "op" => "identify", "d" => { "subscriptions" => ["post.create"], "auth" => { "username" => "someone", "api_key" => "key" }, "client" => "tests" } }, connector.connections[0].sent[0])
+  end
+
+  def test_connects_to_the_websocket_url_from_info
+    connector = FakeConnector.new([HELLO, *fatal])
+    client(connector).run
+    assert_equal(["wss://somewhere.test/ws"], connector.urls)
+  end
+
+  def test_connects_to_a_websocket_url_directly
+    assert_equal("ws://127.0.0.1:3000/ws", E621Stream::Client::Connector.new.websocket_url("ws://127.0.0.1:3000/ws"))
+  end
+
+  def test_retries_when_info_fails
+    connector = FakeConnector.new([HELLO, *fatal])
+    connector.url_errors = [RuntimeError.new("https://e621.stream/info returned 502")]
+    errors = []
+    stream = client(connector)
+    stream.on(:error) { |error| errors << error.message }
+    stream.run
+    assert_equal(["https://e621.stream/info returned 502", "invalid credentials"], errors)
+    assert_equal(1, connector.connections.size)
   end
 
   def test_sends_events_to_dispatch_and_their_types_listeners

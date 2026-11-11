@@ -38,7 +38,8 @@ Listen for an event type with `on("post.create", ...)`, or everything with `on("
 | `cursor` | String \| Number | None | an event id or ms timestamp to replay from, `stream.cursor` is the last event you got |
 | `reconnect` | Boolean | `true` | reconnect when the connection drops (not after things like bad credentials) |
 | `client` | String | None | shown in the server's logs |
-| `url` | String | `wss://e621.stream/ws` | |
+| `url` | String | `https://e621.stream` | the websocket url comes from its `/info`, a `ws://` or `wss://` url is connected to directly |
+| `fetch` | Function | global `fetch` | used for `/info` |
 | `WebSocket` | WebSocket | global | for older node, the `ws` package works |
 
 Private events like `dmail.create` have to be subscribed to by name.

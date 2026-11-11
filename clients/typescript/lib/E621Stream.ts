@@ -8,9 +8,12 @@ export interface Options {
     client?: string;
     /** An event id or millisecond timestamp to replay from. */
     cursor?: number | string;
+    /** Used to get the websocket url from `/info`. */
+    fetch?: typeof fetch;
     /** Reconnect when the connection drops. */
     reconnect?: boolean;
     subscriptions: Array<Subscription>;
+    /** The site, the websocket url comes from its `/info`. A `ws://` or `wss://` url is connected to directly. */
     url?: string;
     /** For runtimes without a global WebSocket (node < 22), the `ws` package works. */
     WebSocket?: typeof WebSocket;
@@ -71,6 +74,7 @@ const HEARTBEAT_MS = 30_000;
 export class E621Stream extends Emitter<Listeners> {
     private attempt = 0;
     private closing = false;
+    private connecting = false;
     private heartbeat: ReturnType<typeof setInterval> | null = null;
     private lastError: StreamError | null = null;
     private lastHeartbeatAck = true;
@@ -81,7 +85,7 @@ export class E621Stream extends Emitter<Listeners> {
 
     constructor(options: Options) {
         super();
-        this.options = { reconnect: true, url: "wss://e621.stream/ws", ...options };
+        this.options = { reconnect: true, url: "https://e621.stream", ...options };
         this.cursor = options.cursor === undefined ? null : String(options.cursor);
     }
 
@@ -157,6 +161,20 @@ export class E621Stream extends Emitter<Listeners> {
         }, delayMS);
     }
 
+    private open(Socket: typeof WebSocket, url: string): void {
+        const socket = this.socket = new Socket(url);
+        socket.addEventListener("open", () => { this.startHeartbeat(); });
+        socket.addEventListener("message", (event: MessageEvent) => {
+            try {
+                this.handle(event.data);
+            } catch (err) {
+                this.emit("error", err instanceof Error ? err : new Error(String(err)));
+            }
+        });
+        socket.addEventListener("close", (event: CloseEvent) => { this.onClose(event.code, event.reason); });
+        socket.addEventListener("error", () => null);
+    }
+
     private send(payload: object): void {
         if (this.socket?.readyState === 1) this.socket.send(JSON.stringify(payload));
     }
@@ -178,6 +196,17 @@ export class E621Stream extends Emitter<Listeners> {
         this.heartbeat = null;
     }
 
+    // fetched every time, so it can move
+    private async websocketURL(): Promise<string> {
+        const { url } = this.options;
+        if (/^wss?:\/\//i.test(url)) return url;
+        const res = await (this.options.fetch ?? fetch)(new URL("/info", url));
+        if (!res.ok) throw new Error(`${url}/info returned ${res.status}`);
+        const { websocket } = await res.json() as { websocket?: unknown };
+        if (typeof websocket !== "string") throw new Error(`${url}/info didn't have a websocket url`);
+        return new URL(websocket, url).href;
+    }
+
     /** Close the connection. */
     close(): void {
         this.closing = true;
@@ -187,23 +216,22 @@ export class E621Stream extends Emitter<Listeners> {
     }
 
     connect(): this {
-        if (this.socket) return this;
+        if (this.socket || this.connecting) return this;
         this.closing = false;
         // not present before node 22
         const global = (globalThis as Partial<Pick<typeof globalThis, "WebSocket">>).WebSocket;
         const Socket = this.options.WebSocket ?? global;
         if (!Socket) throw new Error("no WebSocket available, pass one with the WebSocket option");
-        const socket = this.socket = new Socket(this.options.url);
-        socket.addEventListener("open", () => { this.startHeartbeat(); });
-        socket.addEventListener("message", (event: MessageEvent) => {
-            try {
-                this.handle(event.data);
-            } catch (err) {
-                this.emit("error", err instanceof Error ? err : new Error(String(err)));
-            }
+        this.connecting = true;
+        this.websocketURL().then((url) => {
+            this.connecting = false;
+            if (!this.closing) this.open(Socket, url);
+        }, (err: unknown) => {
+            this.connecting = false;
+            this.emit("error", err instanceof Error ? err : new Error(String(err)));
+            // retried the same as a dropped connection
+            this.onClose(1006, "couldn't get the websocket url");
         });
-        socket.addEventListener("close", (event: CloseEvent) => { this.onClose(event.code, event.reason); });
-        socket.addEventListener("error", () => null);
         return this;
     }
 

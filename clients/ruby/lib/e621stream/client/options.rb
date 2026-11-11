@@ -10,7 +10,8 @@ module E621Stream
       const(:api_key, T.nilable(String), default: nil)
       # A token from https://e621.stream/authorize, instead of a username & api key.
       const(:token, T.nilable(String), default: nil)
-      const(:url, String, default: "wss://e621.stream/ws")
+      # The site, the websocket url comes from its /info. A ws:// or wss:// url is connected to directly.
+      const(:url, String, default: "https://e621.stream")
       # A name for your client, shown in the server's logs.
       const(:client, T.nilable(String), default: nil)
       # An event id (or a millisecond timestamp) to replay from. After that, reconnecting resumes from the last event.
