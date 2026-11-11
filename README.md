@@ -6,7 +6,7 @@ A (mostly) live WebSocket stream of what's happening on e621. Uploads, edits, ta
 wss://e621.stream/ws
 ```
 
-See https://e621.stream for the protocol, events, filters, replaying, compression & close codes (built from [`pages/`](./pages)). There's clients for [TypeScript](./clients/typescript) and [Ruby](./clients/ruby).
+See https://e621.stream for the protocol, events, filters, replaying, compression & close codes (from [`pages/`](./pages)). There's clients for [TypeScript](./clients/typescript) and [Ruby](./clients/ruby).
 
 ```js
 const ws = new WebSocket("wss://e621.stream/ws");
@@ -108,6 +108,4 @@ bun run client --url wss://e621.stream/ws
 ```
 
 ### Pages
-`pages/<name>.md` becomes `/<name>/`, `pages/index.md` is `/`, and `pages/template.html` is the layout. The favicon is from E621OpenAPI. `bun run build:pages` builds it into `dist-pages/`, and the `Deploy Pages` workflow deploys it with [PagesDeployServer](https://github.com/DonovanDMC/PagesDeployServer) when `pages/` changes.
-
-The reverse proxy sends `/ws`, `/health`, `/stats`, `/info`, `/status`, `/status.json` and `/admin` to the gateway, and everything else to the pages.
+`pages/<name>.md` becomes `/<name>/`, `pages/index.md` is `/`, and `pages/template.html` is the layout. The favicon is from E621OpenAPI. The gateway renders them when it starts and serves them itself, so everything on the domain can go to the gateway.

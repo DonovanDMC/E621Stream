@@ -2,6 +2,7 @@ import Debug from "@yiffy/debug";
 
 import { adminUserIDs, authorizeURL, authRequired, gitCommit, maxConnectionsPerIP, oauthEnabled, port, publicURL, trustProxy } from "../config.ts";
 import { EVENT_TYPES } from "../events.ts";
+import { pagesDir, renderPages } from "../pages.ts";
 import redis from "../redis.ts";
 
 import { handleAdmin } from "./admin.ts";
@@ -22,6 +23,17 @@ function clientIP(req: Request, server: Bun.Server<SocketData>): string {
         if (forwarded) return forwarded;
     }
     return server.requestIP(req)?.address ?? "unknown";
+}
+
+let pages: Promise<Map<string, string>> | null = null;
+
+async function servePage(pathname: string): Promise<Response | null> {
+    pages ??= renderPages();
+    const rendered = await pages;
+    const html = rendered.get(pathname);
+    if (html) return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300" } });
+    if (rendered.has(`${pathname}/`)) return new Response(null, { status: 308, headers: { Location: `${pathname}/` } });
+    return null;
 }
 
 const json = (body: unknown, status = 200): Response => Response.json(body, { status, headers: { "Access-Control-Allow-Origin": "*" } });
@@ -57,8 +69,6 @@ export function startGateway(): void {
                     return json({ error: "expected a websocket upgrade" }, 426);
                 }
 
-                // the docs are at / in production
-                case "/":
                 case "/info":
                     return json({
                         name: "E621Stream",
@@ -84,11 +94,20 @@ export function startGateway(): void {
                 case "/status.json":
                     return status().then(data => json(data)).catch((err: unknown) => json({ error: String(err) }, 503));
 
+                case "/favicon.ico":
+                    return new Response(Bun.file(`${pagesDir}/favicon.ico`), { headers: { "Content-Type": "image/x-icon", "Cache-Control": "public, max-age=86400" } });
+
                 case "/stats":
                     return json({ connections: sessions.size, events_received: hubStats.received, last_event_id: hubStats.lastId, last_event_at: hubStats.lastEventAt });
 
                 default:
-                    return json({ error: "not found" }, 404);
+                    if (req.method !== "GET" && req.method !== "HEAD") return json({ error: "not found" }, 404);
+                    return servePage(url.pathname)
+                        .then(res => res ?? json({ error: "not found" }, 404))
+                        .catch((err: unknown) => {
+                            Debug("gateway", `couldn't render the docs: ${String(err)}`);
+                            return new Response("the docs are unavailable right now", { status: 503 });
+                        });
             }
         },
         websocket: {
@@ -114,6 +133,9 @@ export function startGateway(): void {
     });
 
     if (oauthEnabled) void migrateOAuth().catch((err: unknown) => { Debug("gateway:oauth", `couldn't create the tables: ${String(err)}`); });
+    // rendered up front so a broken page shows up in the logs on start
+    pages = renderPages();
+    pages.catch((err: unknown) => { Debug("gateway", `couldn't render the docs: ${String(err)}`); });
     void startHub();
     void startPrivate().catch((err: unknown) => { Debug("gateway:private", `couldn't start: ${String(err)}`); });
     void startModeration().catch((err: unknown) => { Debug("gateway:admin", `couldn't start: ${String(err)}`); });
