@@ -79,6 +79,9 @@ export async function migrateOAuth(): Promise<void> {
             last_used_at timestamptz
         )
     `;
+    // tables made before tokens had names don't have these
+    await sql`ALTER TABLE stream_tokens ADD COLUMN IF NOT EXISTS id bigserial UNIQUE`;
+    await sql`ALTER TABLE stream_tokens ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT 'unnamed'`;
     await sql`CREATE INDEX IF NOT EXISTS stream_tokens_user ON stream_tokens (user_id)`;
 }
 
