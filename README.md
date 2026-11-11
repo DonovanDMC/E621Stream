@@ -77,9 +77,9 @@ docker compose exec ingester bun run backfill reset posts # or all
 `/status` has requests, failures, request times, events, feeds and the backfill. `/status.json` has the same data.
 
 ### Authorize
-`/authorize` lets people connect with e621's OAuth instead of an api key, and gives them a token for `identify`. Make an application on e621 with `OAUTH_REDIRECT_URI` (`https://e621.stream/authorize/callback`) as the redirect uri, and set `E621_OAUTH_CLIENT_ID` & `E621_OAUTH_CLIENT_SECRET`. The gateway then needs postgres too, links & token hashes are stored in `oauth_links` and `stream_tokens`.
+`/authorize` is where people make tokens for `identify`, instead of using an api key. They log in with e621's OAuth, then can create, name & remove tokens, up to `MAX_TOKENS_PER_USER` (10). Every token for a user goes through the same authorization. Make an application on e621 with `OAUTH_REDIRECT_URI` (`https://e621.stream/authorize/callback`) as the redirect uri, and set `E621_OAUTH_CLIENT_ID` & `E621_OAUTH_CLIENT_SECRET`. The gateway then needs postgres too, authorizations & token hashes are stored in `oauth_links` and `stream_tokens`.
 
-Private events are a checkbox, they need the `full` scope. Without it, only `openid profile` is asked for, and the user is rechecked through `/oauth/userinfo`. Access tokens only last 15 minutes, they're refreshed when something needs one, one gateway at a time (refresh tokens can only be used once). If e621 rejects the refresh token, the link and its tokens are deleted. Authorizing again replaces the link and revokes the old token, each user keeps up to `MAX_TOKENS_PER_USER` (10) stream tokens.
+Logging in only asks for `openid profile`, and the user is rechecked through `/oauth/userinfo`. Private events need `full`, turning them on goes through e621 again, turning them off narrows the token with a refresh. Access tokens only last 15 minutes, they're refreshed when something needs one, one gateway at a time (refresh tokens can only be used once). If e621 rejects the refresh token, the authorization and its tokens are deleted. Unlinking deletes them too, and revokes it on e621.
 
 The refresh tokens aren't encrypted, they're useless without the client secret.
 

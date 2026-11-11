@@ -12,7 +12,7 @@ export const NAV: Array<NavLink> = [
     { href: "/compression/", page: "compression", title: "Compression" },
     { href: "/close-codes/", page: "close-codes", title: "Close Codes" },
     { href: "/clients/", page: "clients", title: "Clients" },
-    { href: "/authorize", title: "Authorize" },
+    { href: "/authorize", title: "Tokens" },
     { href: "/status", title: "Status" },
 ];
 

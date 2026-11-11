@@ -263,7 +263,7 @@ export class Session {
             return false;
         }
         if (privateTypes.size !== 0 && !this.canPrivate) {
-            this.close(CloseCodes.INVALID_SUBSCRIPTION, `${[...privateTypes].join(", ")} need private events, authorize again at ${authorizeURL} with them turned on`);
+            this.close(CloseCodes.INVALID_SUBSCRIPTION, `${[...privateTypes].join(", ")} need private events, turn them on at ${authorizeURL}`);
             return false;
         }
         this.subscriptions = subs;
@@ -367,7 +367,7 @@ export class Session {
         this.canPrivate = result.private;
         // authorized again without private events
         if (!result.private && this.privateMember && this.privateMember.privateTypes.size !== 0) {
-            this.close(CloseCodes.INVALID_SUBSCRIPTION, `private events aren't allowed anymore, authorize again at ${authorizeURL} with them turned on`);
+            this.close(CloseCodes.INVALID_SUBSCRIPTION, `private events were turned off, turn them back on at ${authorizeURL}`);
         }
     }
 }
