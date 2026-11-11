@@ -1,5 +1,5 @@
 import Debug from "@yiffy/debug";
-import E621, { RatelimitError, UnexpectedResponseError } from "e621";
+import E621, { RatelimitError, UnexpectedResponseError, type Options } from "e621";
 
 import { e621AuthKey, e621AuthUser, e621AuthRequestIntervalMS, e621BaseURL, e621PrivateRequestIntervalMS, e621RequestIntervalMS, e621UserAgent, redisPrefix } from "./config.ts";
 import redis from "./redis.ts";
@@ -13,10 +13,9 @@ export class AuthError extends Error {
 
 export const hasAuth = Boolean(e621AuthUser && e621AuthKey);
 
-export function createClient(authUser?: string, authKey?: string): E621 {
+export function createClient(auth: Pick<Options, "authKey" | "authToken" | "authUser"> = {}): E621 {
     return new E621({
-        authUser,
-        authKey,
+        ...auth,
         baseURL: e621BaseURL,
         userAgent: e621UserAgent,
         requestTimeout: 30,
@@ -24,7 +23,7 @@ export function createClient(authUser?: string, authKey?: string): E621 {
     });
 }
 
-export const e621 = createClient(e621AuthUser, e621AuthKey);
+export const e621 = createClient({ authUser: e621AuthUser, authKey: e621AuthKey });
 
 export async function getHTML(url: string, query: Record<string, string | number>): Promise<string> {
     const res = await e621.client.get({ url, query, parseAs: "text" });

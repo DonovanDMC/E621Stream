@@ -34,7 +34,7 @@ Listen for an event type with `on("post.create", ...)`, or everything with `on("
 | Option | Type | Default | Description |
 |:---:|:---:|:---:|:---:|
 | `subscriptions` | Array | | what to subscribe to, `stream.subscribe([...])` changes it later |
-| `auth` | Object | None | `{ username, apiKey }` |
+| `auth` | Object | None | `{ username, apiKey }`, or `{ token }` from [/authorize](https://e621.stream/authorize) |
 | `cursor` | String \| Number | None | an event id or ms timestamp to replay from, `stream.cursor` is the last event you got |
 | `reconnect` | Boolean | `true` | reconnect when the connection drops (not after things like bad credentials) |
 | `client` | String | None | shown in the server's logs |

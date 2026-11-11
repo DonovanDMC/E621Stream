@@ -19,7 +19,7 @@ export const CloseCodes = {
 export type CloseCode = typeof CloseCodes[keyof typeof CloseCodes];
 
 export interface IdentifyPayload {
-    auth?: { api_key: string; username: string };
+    auth?: { api_key: string; username: string } | { token: string };
     client?: string;
     cursor?: string | number;
     subscriptions: Array<unknown>;

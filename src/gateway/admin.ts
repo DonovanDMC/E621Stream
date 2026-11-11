@@ -1,44 +1,29 @@
 import Debug from "@yiffy/debug";
 
-import { adminSessionHours, adminUserIDs, clientListKey, redisPrefix, trustProxy } from "../config.ts";
+import { adminUserIDs, clientListKey, oauthEnabled, redisPrefix } from "../config.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
 import redis from "../redis.ts";
 
-import { verify, type E621User } from "./auth.ts";
+import { createSession, sessionCookie, sessionKey, sessionToken, type Admin } from "./adminSession.ts";
+import { verify } from "./auth.ts";
 import { ban, drop, listBans, unban } from "./moderation.ts";
+import { startAuthorization } from "./oauth.ts";
 import { PAGE_CSS } from "./status.ts";
 
 import type { ListedClient } from "./presence.ts";
 
-const COOKIE = "e621stream_admin";
 const MAX_ATTEMPTS = 10;
 const ATTEMPT_WINDOW_SECONDS = 600;
-
-type Admin = Pick<E621User, "id" | "name">;
 
 const STATE_LABEL: Record<ListedClient["state"], string> = { pending: "identifying", replaying: "replaying", live: "live" };
 const STATE_CLASS: Record<ListedClient["state"], string> = { pending: "dim", replaying: "run", live: "ok" };
 
 const esc = (value: number | string | null | undefined): string => String(value ?? "").replaceAll(/[&<>"']/g, char => `&#${char.codePointAt(0)};`);
-const sessionKey = (token: string): string => `${redisPrefix}:admin:${new Bun.CryptoHasher("sha256").update(token).digest("hex")}`;
 const optional = (value: string | null | undefined): string | null => value?.trim() ? value.trim() : null;
 const redirect = (headers: Record<string, string> = {}): Response => new Response(null, { status: 303, headers: { Location: "/admin", ...headers } });
 
-function token(req: Request): string | null {
-    for (const part of (req.headers.get("cookie") ?? "").split(";")) {
-        const [name, ...value] = part.trim().split("=");
-        if (name === COOKIE) return value.join("=") || null;
-    }
-    return null;
-}
-
-function cookie(req: Request, value: string, maxAge: number): string {
-    const secure = new URL(req.url).protocol === "https:" || (trustProxy && req.headers.get("x-forwarded-proto") === "https");
-    return `${COOKIE}=${value}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
-}
-
 async function current(req: Request, ip: string): Promise<Admin | null> {
-    const value = token(req);
+    const value = sessionToken(req);
     if (!value) return null;
     const raw = await redis.get(sessionKey(value));
     if (raw === null) {
@@ -104,7 +89,11 @@ function loginPage(error?: string, status = 200): Response {
 <input name="username" placeholder="e621 username" autocomplete="username" required>
 <input name="api_key" type="password" placeholder="api key" autocomplete="current-password" required>
 <button type="submit">Log in</button>
-</form>`, status);
+</form>${oauthEnabled ? `
+<p>or</p>
+<form class="stack" method="post" action="/admin/oauth">
+<button type="submit">Log in with e621</button>
+</form>` : ""}`, status);
 }
 
 function ago(iso: string): string {
@@ -189,10 +178,9 @@ async function login(req: Request, ip: string): Promise<Response> {
 
     await redis.del(attempts);
     const admin: Admin = { id: result.user.id, name: result.user.name };
-    const value = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
-    await redis.set(sessionKey(value), JSON.stringify(admin), "EX", adminSessionHours * 3600);
+    const setCookie = await createSession(req, admin);
     Debug("gateway:admin", `${admin.name} #${admin.id} logged in from ${ip}`);
-    return redirect({ "Set-Cookie": cookie(req, value, adminSessionHours * 3600) });
+    return redirect({ "Set-Cookie": setCookie });
 }
 
 async function action(req: Request, admin: Admin, name: string): Promise<Response> {
@@ -228,10 +216,14 @@ async function action(req: Request, admin: Admin, name: string): Promise<Respons
 export async function handleAdmin(req: Request, ip: string): Promise<Response> {
     const { pathname } = new URL(req.url);
     if (pathname === "/admin/login" && req.method === "POST") return login(req, ip);
+    if (pathname === "/admin/oauth" && req.method === "POST" && oauthEnabled) {
+        const res = await startAuthorization(req, ip, "admin");
+        return res ?? loginPage("too many attempts, try again later", 429);
+    }
     if (pathname === "/admin/logout" && req.method === "POST") {
-        const value = token(req);
+        const value = sessionToken(req);
         if (value) await redis.del(sessionKey(value));
-        return redirect({ "Set-Cookie": cookie(req, "", 0) });
+        return redirect({ "Set-Cookie": sessionCookie(req, "", 0) });
     }
     const admin = await current(req, ip);
     if (pathname === "/admin" && req.method === "GET") return admin ? adminPage(admin) : loginPage();

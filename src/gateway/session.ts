@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import Debug from "@yiffy/debug";
 
 import {
+    authorizeURL,
     authRequired,
     identifyTimeoutMS,
     maxBufferedBytes,
@@ -15,10 +16,11 @@ import {
 import { dispatchFrame, EVENT_TYPES, parseEntry, type StreamEvent } from "../events.ts";
 import redis, { type StreamEntry } from "../redis.ts";
 
-import { verify, type Credentials, type E621User } from "./auth.ts";
+import { describeCredentials, verify, type Credentials, type E621User } from "./auth.ts";
 import { StreamCompressor, type CompressionType } from "./compression.ts";
 import { compile, FilterError, matches, type CompiledSubscription, type Subscription } from "./filter.ts";
 import { isBanned } from "./moderation.ts";
+import { parseToken } from "./oauth.ts";
 import { removePrivate, updatePrivate, type PrivateEvent, type PrivateMember } from "./private.ts";
 import { CloseCodes, compareIds, parseCursor, PROTOCOL_VERSION, type ClientMessage, type CloseCode, type IdentifyPayload } from "./protocol.ts";
 
@@ -48,7 +50,11 @@ function bump<K>(map: Map<K, number>, key: K, by: number): number {
 
 function parseCredentials(value: unknown): Credentials | null {
     if (!value || typeof value !== "object") return null;
-    const { username, api_key: apiKey } = value as Record<string, unknown>;
+    const { username, api_key: apiKey, token } = value as Record<string, unknown>;
+    if (token !== undefined) {
+        const parsed = parseToken(token);
+        return parsed ? { token: parsed } : null;
+    }
     if (typeof username !== "string" || typeof apiKey !== "string" || username === "" || apiKey === "") return null;
     return { username, apiKey };
 }
@@ -59,6 +65,7 @@ export function connectionCount(ip: string): number {
 
 export class Session {
     private backlog: Array<StreamEvent> = [];
+    private canPrivate = false;
     private compressor: StreamCompressor | null;
     private credentials: Credentials | null = null;
     private identifying = false;
@@ -152,13 +159,13 @@ export class Session {
             try {
                 result = await verify(credentials);
             } catch (err) {
-                Debug("gateway:auth", `couldn't verify ${credentials.username} from ${this.ws.data.ip}: ${String(err)}`);
+                Debug("gateway:auth", `couldn't verify ${describeCredentials(credentials)} from ${this.ws.data.ip}: ${String(err)}`);
                 this.close(CloseCodes.UNKNOWN_ERROR, "couldn't reach e621");
                 return;
             }
             if (this.is("closed")) return;
             if (!result.ok) {
-                Debug("gateway:auth", `${credentials.username} from ${this.ws.data.ip} failed verification: ${result.reason}`);
+                Debug("gateway:auth", `${describeCredentials(credentials)} from ${this.ws.data.ip} failed verification: ${result.reason}`);
                 this.close(CloseCodes.AUTHENTICATION_FAILED, result.reason);
                 return;
             }
@@ -174,6 +181,7 @@ export class Session {
                 return;
             }
             this.credentials = credentials;
+            this.canPrivate = result.private;
             this.user = result.user;
             bump(connectionsByUser, result.user.id, 1);
         }
@@ -254,8 +262,12 @@ export class Session {
             this.close(CloseCodes.INVALID_SUBSCRIPTION, `${[...privateTypes].join(", ")} require auth`);
             return false;
         }
+        if (privateTypes.size !== 0 && !this.canPrivate) {
+            this.close(CloseCodes.INVALID_SUBSCRIPTION, `${[...privateTypes].join(", ")} need private events, authorize again at ${authorizeURL} with them turned on`);
+            return false;
+        }
         this.subscriptions = subs;
-        if (this.credentials && this.user) {
+        if (this.credentials && this.user && this.canPrivate) {
             this.privateMember ??= { credentials: this.credentials, userId: this.user.id, privateTypes, deliverPrivate: (event): void => { this.deliverPrivate(event); } };
             this.privateMember.privateTypes = privateTypes;
             updatePrivate(this.privateMember);
@@ -348,8 +360,14 @@ export class Session {
         if (!this.credentials || this.state === "closed") return;
         const result = await verify(this.credentials);
         if (!result.ok) {
-            Debug("gateway:auth", `${this.credentials.username} on ${this.id} stopped passing verification: ${result.reason}`);
+            Debug("gateway:auth", `${describeCredentials(this.credentials)} on ${this.id} stopped passing verification: ${result.reason}`);
             this.close(CloseCodes.AUTHENTICATION_EXPIRED, result.reason);
+            return;
+        }
+        this.canPrivate = result.private;
+        // authorized again without private events
+        if (!result.private && this.privateMember && this.privateMember.privateTypes.size !== 0) {
+            this.close(CloseCodes.INVALID_SUBSCRIPTION, `private events aren't allowed anymore, authorize again at ${authorizeURL} with them turned on`);
         }
     }
 }

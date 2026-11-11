@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { UnexpectedResponseError } from "e621";
 
-import { parseBasicAuth } from "../src/gateway/auth.ts";
+import { parseAuthHeader, parseBasicAuth } from "../src/gateway/auth.ts";
+import { isInvalidGrant, parseToken } from "../src/gateway/oauth.ts";
 import { compareIds, parseCursor } from "../src/gateway/protocol.ts";
 import { diff } from "../src/ingester/posts.ts";
 
@@ -24,6 +26,23 @@ test("basic auth header", () => {
     expect(parseBasicAuth(`Basic ${btoa("someone:abc:def")}`)).toEqual({ username: "someone", apiKey: "abc:def" });
     expect(parseBasicAuth("Bearer abc")).toBeNull();
     expect(parseBasicAuth(null)).toBeNull();
+});
+
+test("bearer auth header", () => {
+    expect(parseAuthHeader("Bearer e6s_abc")).toEqual({ token: "e6s_abc" });
+    expect(parseAuthHeader(`Basic ${btoa("someone:key")}`)).toEqual({ username: "someone", apiKey: "key" });
+    // e621's own access tokens aren't ours
+    expect(parseAuthHeader("Bearer abc")).toBeNull();
+    expect(parseToken(123)).toBeNull();
+});
+
+test("invalid_grant means the link is gone", () => {
+    const error = (status: number, body: unknown): UnexpectedResponseError => new UnexpectedResponseError(undefined, new Response(null, { status }), body);
+    expect(isInvalidGrant(error(400, { error: "invalid_grant", error_description: "revoked" }))).toBe(true);
+    expect(isInvalidGrant(error(400, { error: "invalid_request" }))).toBe(false);
+    // our own client credentials being wrong shouldn't unlink anyone
+    expect(isInvalidGrant(error(401, { error: "invalid_client" }))).toBe(false);
+    expect(isInvalidGrant(new Error("invalid_grant"))).toBe(false);
 });
 
 test("post diffs", () => {

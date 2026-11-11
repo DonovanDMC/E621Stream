@@ -2,8 +2,8 @@ import Emitter from "./Emitter.ts";
 import { CloseCodes, type EventType, type PrivateEventType, type StreamEvent, type Subscription } from "./events.ts";
 
 export interface Options {
-    /** Your e621 username & api key. */
-    auth?: { apiKey: string; username: string };
+    /** Your e621 username & api key, or a token from https://e621.stream/authorize. */
+    auth?: { apiKey: string; username: string } | { token: string };
     /** Shown in the server's logs. */
     client?: string;
     /** An event id or millisecond timestamp to replay from. */
@@ -97,7 +97,7 @@ export class E621Stream extends Emitter<Listeners> {
                 this.send({
                     op: "identify",
                     d: {
-                        ...(auth ? { auth: { username: auth.username, api_key: auth.apiKey } } : {}),
+                        ...(auth ? { auth: "token" in auth ? { token: auth.token } : { username: auth.username, api_key: auth.apiKey } } : {}),
                         ...(client ? { client } : {}),
                         ...(this.cursor === null ? {} : { cursor: this.cursor }),
                         subscriptions,

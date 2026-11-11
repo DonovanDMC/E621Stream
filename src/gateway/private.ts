@@ -6,7 +6,9 @@ import { PRIVATE_EVENT_TYPES, type PrivateEventType } from "../events.ts";
 import { count } from "../metrics.ts";
 import redis, { createRedis } from "../redis.ts";
 
-import type { Credentials } from "./auth.ts";
+import { describeCredentials, type Credentials } from "./auth.ts";
+import { accessToken } from "./oauth.ts";
+
 import type E621 from "e621";
 
 export interface PrivateEvent { data: unknown; id: string; time: string; type: PrivateEventType }
@@ -116,10 +118,18 @@ async function own(source: string, userId: number): Promise<boolean> {
 }
 
 async function poll(name: string, userId: number, credentials: Credentials): Promise<void> {
-    const client = createClient(credentials.username, credentials.apiKey);
-    const search = <T>(fn: (client: E621) => Promise<T>): Promise<T> => {
+    const search = async <T>(fn: (client: E621) => Promise<T>): Promise<T> => {
+        let client: E621;
+        if ("token" in credentials) {
+            // gotten for every request, it only lasts 15 minutes
+            const token = await accessToken(userId);
+            if (!token) throw new AuthError(`${name} for #${userId}`, 401);
+            client = createClient({ authToken: token });
+        } else {
+            client = createClient({ authUser: credentials.username, authKey: credentials.apiKey });
+        }
         count("requests.private");
-        return request(`${name} for ${credentials.username}`, () => fn(client), privateQueue, 2);
+        return request(`${name} for ${describeCredentials(credentials)}`, () => fn(client), privateQueue, 2);
     };
     for (const event of await SOURCES[name]!.poll(search, userId)) await redis.publish(channel, JSON.stringify({ user_id: userId, ...event }));
 }

@@ -22,6 +22,8 @@ client.on(:error) { |error| warn(error.message) }
 client.run
 ```
 
+Instead of `username:` & `api_key:`, you can pass `token:` with a token from [/authorize](https://e621.stream/authorize).
+
 `run` blocks, unless you're already in a reactor, then it runs as a task and `client.close` stops it.
 
 `on("post.create")` listens for one type, `on(:dispatch)` for everything. Events have `id`, `type`, `time` and `data` (the record as the api returns it), see [Events](https://e621.stream/events/). There's also `:ready`, `:replay_complete`, `:subscribed`, `:reconnecting`, `:close` and `:error`.

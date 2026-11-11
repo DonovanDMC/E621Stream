@@ -46,6 +46,8 @@ You need a normal e621 account, with an api key from Account > Manage API Access
 
 Send them in `identify` as `auth: { username, api_key }`, or as an `Authorization: Basic base64(username:api_key)` header when connecting (the same as e621).
 
+Or, [authorize](/authorize) with your e621 account to get a token instead, and send `auth: { token }` or an `Authorization: Bearer <token>` header. Private events are optional when authorizing, they need full access to your account. Without them, subscribing to a private event closes with `4006`. Authorizing again changes what all of your tokens can do, and revoking E621Stream in e621's [authorized applications](https://e621.net/applications/authorized) stops all of them (`4011`).
+
 ### Client -> Server
 
 | op | payload | notes |

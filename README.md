@@ -76,8 +76,15 @@ docker compose exec ingester bun run backfill reset posts # or all
 ### Status
 `/status` has requests, failures, request times, events, feeds and the backfill. `/status.json` has the same data.
 
+### Authorize
+`/authorize` lets people connect with e621's OAuth instead of an api key, and gives them a token for `identify`. Make an application on e621 with `OAUTH_REDIRECT_URI` (`https://e621.stream/authorize/callback`) as the redirect uri, and set `E621_OAUTH_CLIENT_ID` & `E621_OAUTH_CLIENT_SECRET`. The gateway then needs postgres too, links & token hashes are stored in `oauth_links` and `stream_tokens`.
+
+Private events are a checkbox, they need the `full` scope. Without it, only `openid profile` is asked for, and the user is rechecked through `/oauth/userinfo`. Access tokens only last 15 minutes, they're refreshed when something needs one, one gateway at a time (refresh tokens can only be used once). If e621 rejects the refresh token, the link and its tokens are deleted. Authorizing again replaces the link and revokes the old token, each user keeps up to `MAX_TOKENS_PER_USER` (10) stream tokens.
+
+The refresh tokens aren't encrypted, they're useless without the client secret.
+
 ### Admin
-`/admin` lists every connected client (name, user, state, subscriptions, ip & when they connected), and can drop connections and ban users. Log in with an e621 username & api key, only the user ids in `ADMIN_USER_IDS` are let in. Logins last `ADMIN_SESSION_HOURS` (12).
+`/admin` lists every connected client (name, user, state, subscriptions, ip & when they connected), and can drop connections and ban users. Log in with an e621 username & api key, only the user ids in `ADMIN_USER_IDS` are let in. Logins last `ADMIN_SESSION_HOURS` (12). With oauth set up, there's also a "Log in with e621" button, it only asks for `openid profile` and revokes the token right after.
 
 Dropped clients get `4012` and banned ones `4013`, the clients don't reconnect after either. Bans are by user id, kept in redis until they're lifted, and drop every connection that user has.
 

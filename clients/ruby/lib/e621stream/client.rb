@@ -45,6 +45,7 @@ module E621Stream
         subscriptions: T::Array[Subscription],
         username:      T.nilable(String),
         api_key:       T.nilable(String),
+        token:         T.nilable(String),
         url:           String,
         client:        T.nilable(String),
         cursor:        T.nilable(T.any(String, Integer)),
@@ -52,8 +53,8 @@ module E621Stream
         connector:     Connector,
       ).void
     end
-    def initialize(subscriptions:, username: nil, api_key: nil, url: "wss://e621.stream/ws", client: nil, cursor: nil, reconnect: true, connector: Connector.new)
-      @options = T.let(Options.new(subscriptions: subscriptions, username: username, api_key: api_key, url: url, client: client, cursor: cursor, reconnect: reconnect), Options)
+    def initialize(subscriptions:, username: nil, api_key: nil, token: nil, url: "wss://e621.stream/ws", client: nil, cursor: nil, reconnect: true, connector: Connector.new)
+      @options = T.let(Options.new(subscriptions: subscriptions, username: username, api_key: api_key, token: token, url: url, client: client, cursor: cursor, reconnect: reconnect), Options)
       @connector = connector
       @cursor = T.let(cursor&.to_s, T.nilable(String))
       @listeners = T.let(Hash.new { |hash, key| hash[key] = [] }, T::Hash[String, T::Array[Listener]])
@@ -157,7 +158,11 @@ module E621Stream
       case message["op"]
       when "hello"
         identify = { subscriptions: options.subscriptions }
-        identify[:auth] = { username: options.username, api_key: options.api_key } if options.username && options.api_key
+        if options.token
+          identify[:auth] = { token: options.token }
+        elsif options.username && options.api_key
+          identify[:auth] = { username: options.username, api_key: options.api_key }
+        end
         identify[:client] = options.client if options.client
         identify[:cursor] = @cursor if @cursor
         send_message({ op: "identify", d: identify })

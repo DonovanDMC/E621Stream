@@ -67,6 +67,14 @@ export const maxConnectionsPerIP = int("MAX_CONNECTIONS_PER_IP", 10);
 export const maxConnectionsPerUser = int("MAX_CONNECTIONS_PER_USER", 5);
 export const authCacheSeconds = int("AUTH_CACHE_SECONDS", 30 * 60);
 
+// oauth, /authorize is turned off unless the client id & secret are set
+export const oauthClientId = Bun.env.E621_OAUTH_CLIENT_ID?.trim();
+export const oauthClientSecret = Bun.env.E621_OAUTH_CLIENT_SECRET?.trim();
+export const oauthEnabled = Boolean(oauthClientId && oauthClientSecret);
+export const oauthRedirectURI = Bun.env.OAUTH_REDIRECT_URI ?? "https://e621.stream/authorize/callback";
+export const authorizeURL = new URL("/authorize", oauthRedirectURI).href;
+export const maxTokensPerUser = int("MAX_TOKENS_PER_USER", 10);
+
 // nobody can log in to /admin if this is empty
 export const adminUserIDs = new Set(list("ADMIN_USER_IDS").map(Number).filter(id => Number.isSafeInteger(id) && id > 0));
 export const adminSessionHours = int("ADMIN_SESSION_HOURS", 12);

@@ -1,14 +1,15 @@
 import Debug from "@yiffy/debug";
 
-import { adminUserIDs, authRequired, gitCommit, maxConnectionsPerIP, port, publicURL, trustProxy } from "../config.ts";
+import { adminUserIDs, authorizeURL, authRequired, gitCommit, maxConnectionsPerIP, oauthEnabled, port, publicURL, trustProxy } from "../config.ts";
 import { EVENT_TYPES } from "../events.ts";
 import redis from "../redis.ts";
 
 import { handleAdmin } from "./admin.ts";
-import { parseBasicAuth } from "./auth.ts";
+import { parseAuthHeader } from "./auth.ts";
 import { COMPRESSION_TYPES, isCompressionType, type CompressionType } from "./compression.ts";
 import { hubStats, startHub } from "./hub.ts";
 import { startModeration } from "./moderation.ts";
+import { handleAuthorize, migrateOAuth } from "./oauth.ts";
 import { connectionsChanged, startPresence } from "./presence.ts";
 import { startPrivate } from "./private.ts";
 import { PROTOCOL_VERSION } from "./protocol.ts";
@@ -33,6 +34,12 @@ export function startGateway(): void {
             if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
                 return handleAdmin(req, clientIP(req, srv)).catch((err: unknown) => new Response(`admin unavailable: ${String(err)}`, { status: 503 }));
             }
+            if (oauthEnabled && (url.pathname === "/authorize" || url.pathname.startsWith("/authorize/"))) {
+                return handleAuthorize(req, clientIP(req, srv)).catch((err: unknown) => {
+                    Debug("gateway:oauth", `${url.pathname} failed: ${String(err)}`);
+                    return new Response("authorizing is unavailable right now", { status: 503 });
+                });
+            }
             switch (url.pathname) {
                 case "/ws": {
                     const ip = clientIP(req, srv);
@@ -45,7 +52,7 @@ export function startGateway(): void {
                         if (!isCompressionType(compress)) return json({ error: `compress must be one of ${COMPRESSION_TYPES.join(", ")}` }, 400);
                         compression = compress;
                     }
-                    const headerAuth = parseBasicAuth(req.headers.get("authorization"));
+                    const headerAuth = parseAuthHeader(req.headers.get("authorization"));
                     if (srv.upgrade(req, { data: { ip, compression, headerAuth } })) return;
                     return json({ error: "expected a websocket upgrade" }, 426);
                 }
@@ -59,6 +66,7 @@ export function startGateway(): void {
                         commit: gitCommit,
                         websocket: publicURL,
                         auth_required: authRequired,
+                        authorize: oauthEnabled ? authorizeURL : null,
                         compression: COMPRESSION_TYPES,
                         events: EVENT_TYPES,
                     });
@@ -105,6 +113,7 @@ export function startGateway(): void {
         },
     });
 
+    if (oauthEnabled) void migrateOAuth().catch((err: unknown) => { Debug("gateway:oauth", `couldn't create the tables: ${String(err)}`); });
     void startHub();
     void startPrivate().catch((err: unknown) => { Debug("gateway:private", `couldn't start: ${String(err)}`); });
     void startModeration().catch((err: unknown) => { Debug("gateway:admin", `couldn't start: ${String(err)}`); });
@@ -113,5 +122,6 @@ export function startGateway(): void {
         for (const session of sessions) void session.recheckAuth().catch(() => null);
     }, 60_000);
     Debug("gateway", `listening on ${server.url.href}`);
+    Debug("gateway:oauth", oauthEnabled ? `authorizing at ${authorizeURL}` : "no E621_OAUTH_CLIENT_ID/E621_OAUTH_CLIENT_SECRET set, /authorize is off");
     Debug("gateway:admin", adminUserIDs.size === 0 ? "no ADMIN_USER_IDS set, nobody can log in to /admin" : `admins: ${[...adminUserIDs].map(id => `#${id}`).join(", ")}`);
 }

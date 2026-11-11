@@ -8,6 +8,8 @@ module E621Stream
       # Your e621 username and an api key, from Account > Manage API Access.
       const(:username, T.nilable(String), default: nil)
       const(:api_key, T.nilable(String), default: nil)
+      # A token from https://e621.stream/authorize, instead of a username & api key.
+      const(:token, T.nilable(String), default: nil)
       const(:url, String, default: "wss://e621.stream/ws")
       # A name for your client, shown in the server's logs.
       const(:client, T.nilable(String), default: nil)
