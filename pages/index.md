@@ -67,7 +67,7 @@ Or, log in at [/authorize](/authorize) with your e621 account and make a token t
 | `dispatch` | `id`, `type`, `time` (when it happened on e621) and `data`, not in `d` |
 | `replay_complete` | `{ events, cursor }` |
 | `subscribed` | `{ subscriptions }` |
-| `snapshot` | `{ resource, nonce, snapshots }` |
+| `snapshot` | `{ resource, nonce, snapshots, done }` |
 | `heartbeat_ack` | `{ cursor }`, the last event you were sent |
 | `error` | `{ code, message }`, right before you're disconnected with that code |
 

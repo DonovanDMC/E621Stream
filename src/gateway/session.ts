@@ -12,6 +12,7 @@ import {
     maxSnapshotIds,
     maxSubscriptions,
     replayBatchSize,
+    snapshotChunkSize,
     streamKey,
 } from "../config.ts";
 import { getSnapshots } from "../db.ts";
@@ -227,14 +228,19 @@ export class Session {
             this.close(CloseCodes.DECODE_ERROR, request);
             return;
         }
-        const found = await getSnapshots(request.resource, request.ids);
-        if (this.is("closed")) return;
-        const snapshots: Record<number, Record<string, unknown> | null> = {};
-        for (const id of request.ids) {
-            const data = found.get(id);
-            snapshots[id] = data ? { id, ...data } : null;
+        for (let i = 0; i < request.ids.length; i += snapshotChunkSize) {
+            const ids = request.ids.slice(i, i + snapshotChunkSize);
+            const found = await getSnapshots(request.resource, ids);
+            if (this.is("closed")) return;
+            const snapshots: Record<number, Record<string, unknown> | null> = {};
+            for (const id of ids) {
+                const data = found.get(id);
+                snapshots[id] = data ? { id, ...data } : null;
+            }
+            const done = i + snapshotChunkSize >= request.ids.length;
+            this.send({ op: "snapshot", d: { resource: request.resource, nonce: request.nonce, snapshots, done } });
+            while (!done && !this.is("closed") && this.buffered() > maxBufferedBytes / 2) await Bun.sleep(50);
         }
-        this.send({ op: "snapshot", d: { resource: request.resource, nonce: request.nonce, snapshots } });
     }
 
     private async replay(cursor: string): Promise<void> {

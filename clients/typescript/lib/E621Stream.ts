@@ -35,7 +35,7 @@ export type SnapshotResource = keyof SnapshotDataMap;
 /** Keyed by id, `null` for ones that aren't known. */
 export type Snapshots<R extends SnapshotResource> = Record<number, SnapshotDataMap[R] | null>;
 
-interface PendingSnapshot { reject(err: Error): void; resolve(snapshots: Snapshots<SnapshotResource>): void }
+interface PendingSnapshot { received: Snapshots<SnapshotResource>; reject(err: Error): void; resolve(snapshots: Snapshots<SnapshotResource>): void }
 
 export interface ClientEvents {
     close: [{ code: number; reason: string; reconnecting: boolean }];
@@ -144,11 +144,15 @@ export class E621Stream extends Emitter<Listeners> {
                 break;
             }
             case "snapshot": {
-                const { nonce, snapshots } = message.d as { nonce: string | null; snapshots: Snapshots<SnapshotResource> };
+                const { done, nonce, snapshots } = message.d as { done?: boolean; nonce: string | null; snapshots: Snapshots<SnapshotResource> };
                 const pending = nonce === null ? undefined : this.pendingSnapshots.get(nonce);
                 if (pending) {
-                    this.pendingSnapshots.delete(nonce!);
-                    pending.resolve(snapshots);
+                    Object.assign(pending.received, snapshots);
+                    // big requests come back in chunks, older servers don't send done
+                    if (done !== false) {
+                        this.pendingSnapshots.delete(nonce!);
+                        pending.resolve(pending.received);
+                    }
                 }
                 break;
             }
@@ -261,7 +265,7 @@ export class E621Stream extends Emitter<Listeners> {
     }
 
     /**
-     * Get what was last seen of up to 100 records. Only the fields update events are compared on are kept, see https://e621.stream/snapshots/
+     * Get what was last seen of up to 1000 records. Only the fields update events are compared on are kept, see https://e621.stream/snapshots/
      * @example
      * ```ts
      * const posts = await stream.snapshots("post", [1, 2, 3]);
@@ -272,7 +276,7 @@ export class E621Stream extends Emitter<Listeners> {
         if (!this.ready) throw new Error("not ready");
         const nonce = String(++this.nonce);
         return new Promise((resolve, reject) => {
-            this.pendingSnapshots.set(nonce, { resolve: resolve as PendingSnapshot["resolve"], reject });
+            this.pendingSnapshots.set(nonce, { received: {}, resolve: resolve as PendingSnapshot["resolve"], reject });
             this.send({ op: "snapshot", d: { resource, ids, nonce } });
         });
     }

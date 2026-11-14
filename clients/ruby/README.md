@@ -30,7 +30,7 @@ Instead of `username:` & `api_key:`, you can pass `token:` with a token from [/a
 
 It reconnects when the connection drops (`reconnect: false` turns that off), and picks up from `client.cursor`. Pass `cursor:` to replay from an event id or ms timestamp. `url:` is the site (`https://e621.stream`), the websocket url comes from its `/info`, or pass a `ws://`/`wss://` url to connect to it directly. `client.subscribe([...])` changes subscriptions. Private events like `dmail.create` have to be subscribed to by name.
 
-`client.snapshots(resource, ids) { |snapshots| ... }` gets what was last seen of up to 100 records (see [Snapshots](https://e621.stream/snapshots/)), by id, nil for ones that aren't known. Only after `:ready`, and the block is dropped if the connection closes first.
+`client.snapshots(resource, ids) { |snapshots| ... }` gets what was last seen of up to 1000 records (see [Snapshots](https://e621.stream/snapshots/)), by id, nil for ones that aren't known. Only after `:ready`, and the block is dropped if the connection closes first.
 
 ```ruby
 client.on(:ready) do

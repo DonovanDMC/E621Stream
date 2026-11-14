@@ -79,7 +79,9 @@ export const maxTokensPerUser = int("MAX_TOKENS_PER_USER", 10);
 export const adminUserIDs = new Set(list("ADMIN_USER_IDS").map(Number).filter(id => Number.isSafeInteger(id) && id > 0));
 export const adminSessionHours = int("ADMIN_SESSION_HOURS", 12);
 export const maxSubscriptions = int("MAX_SUBSCRIPTIONS", 50);
-export const maxSnapshotIds = int("MAX_SNAPSHOT_IDS", 100);
+export const maxSnapshotIds = int("MAX_SNAPSHOT_IDS", 1000);
+// big snapshot requests are answered over several messages of this many
+export const snapshotChunkSize = int("SNAPSHOT_CHUNK_SIZE", 100);
 export const maxClientMessagesPerMinute = int("MAX_CLIENT_MESSAGES_PER_MINUTE", 60);
 export const maxBufferedBytes = int("MAX_BUFFERED_BYTES", 16 * 1024 * 1024);
 export const replayBatchSize = int("REPLAY_BATCH_SIZE", 500);

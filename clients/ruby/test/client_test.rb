@@ -147,8 +147,9 @@ class ClientTest < Minitest::Test
   end
 
   def test_snapshots_get_their_reply
-    reply = { op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { "1" => { "id" => 1, "rating" => "s" }, "2" => nil } } }
-    connector = FakeConnector.new([HELLO, { op: "ready", d: {} }, reply, *fatal])
+    first = { op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { "1" => { "id" => 1, "rating" => "s" } }, done: false } }
+    rest = { op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { "2" => nil }, done: true } }
+    connector = FakeConnector.new([HELLO, { op: "ready", d: {} }, first, rest, *fatal])
     stream = client(connector)
     posts = nil
     stream.on(:ready) { stream.snapshots("post", [1, 2]) { |snapshots| posts = snapshots } }

@@ -44,7 +44,7 @@ Listen for an event type with `on("post.create", ...)`, or everything with `on("
 
 Private events like `dmail.create` have to be subscribed to by name.
 
-`stream.snapshots(resource, ids)` gets what was last seen of up to 100 records at once (see [Snapshots](https://e621.stream/snapshots/)), keyed by id with `null` for ones that aren't known. It throws if you aren't ready yet, and rejects if the connection closes before the reply.
+`stream.snapshots(resource, ids)` gets what was last seen of up to 1000 records at once (see [Snapshots](https://e621.stream/snapshots/)), keyed by id with `null` for ones that aren't known. It throws if you aren't ready yet, and rejects if the connection closes before the reply.
 
 ```ts
 stream.on("ready", async () => {

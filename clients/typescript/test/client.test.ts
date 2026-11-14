@@ -131,7 +131,12 @@ describe("E621Stream", () => {
         const posts = client.snapshots("post", [1, 2]), comments = client.snapshots("comment", [3]);
         expect(socket.sent.slice(-2)).toEqual([{ op: "snapshot", d: { resource: "post", ids: [1, 2], nonce: "1" } }, { op: "snapshot", d: { resource: "comment", ids: [3], nonce: "2" } }]);
         socket.receive({ op: "snapshot", d: { resource: "comment", nonce: "2", snapshots: { 3: { id: 3, body: "hi" } } } });
-        socket.receive({ op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { 1: { id: 1, rating: "s" }, 2: null } } });
+        let settled = false;
+        void posts.then(() => settled = true);
+        socket.receive({ op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { 1: { id: 1, rating: "s" } }, done: false } });
+        await tick();
+        expect(settled).toBe(false);
+        socket.receive({ op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { 2: null }, done: true } });
         expect(await posts).toEqual({ 1: { id: 1, rating: "s" }, 2: null });
         expect((await comments)[3]?.body).toBe("hi");
         client.close();

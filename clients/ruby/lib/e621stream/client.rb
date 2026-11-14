@@ -87,7 +87,8 @@ module E621Stream
       @last_error = T.let(nil, T.nilable(StreamError))
       @ready = T.let(false, T::Boolean)
       @nonce = T.let(0, Integer)
-      @pending_snapshots = T.let({}, T::Hash[String, SnapshotCallback])
+      # the callback and what's been received so far, big requests come back in chunks
+      @pending_snapshots = T.let({}, T::Hash[String, [SnapshotCallback, Snapshots]])
     end
 
     # Listens for an event type (like "post.create"), or one of :dispatch (every event), :ready, :replay_complete,
@@ -129,7 +130,7 @@ module E621Stream
       send_message({ op: "subscribe", d: { subscriptions: subscriptions } })
     end
 
-    # Looks up what was last seen of up to 100 records, see https://e621.stream/snapshots/. The block gets them by id,
+    # Looks up what was last seen of up to 1000 records, see https://e621.stream/snapshots/. The block gets them by id,
     # nil for ones that aren't known. It isn't called if the connection closes first.
     #
     #   client.on(:ready) { client.snapshots("post", [1, 2]) { |posts| p(posts[1]&.dig("tags", "general")) } }
@@ -138,7 +139,7 @@ module E621Stream
       raise("not ready") unless @ready
 
       nonce = (@nonce += 1).to_s
-      @pending_snapshots[nonce] = block
+      @pending_snapshots[nonce] = [block, {}]
       send_message({ op: "snapshot", d: { resource: resource, ids: ids, nonce: nonce } })
     end
 
@@ -221,7 +222,15 @@ module E621Stream
       when "subscribed"
         emit("subscribed", data["subscriptions"])
       when "snapshot"
-        @pending_snapshots.delete(data["nonce"])&.call(data["snapshots"].to_h { |id, snapshot| [id.to_i, snapshot] })
+        pending = @pending_snapshots[data["nonce"]]
+        return unless pending
+
+        data["snapshots"].each { |id, snapshot| pending[1][id.to_i] = snapshot }
+        # older servers don't send done
+        return if data["done"] == false
+
+        @pending_snapshots.delete(data["nonce"])
+        pending[0].call(pending[1])
       when "error"
         @last_error = StreamError.new(data["code"], data["message"])
       end
