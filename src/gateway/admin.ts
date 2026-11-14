@@ -142,7 +142,10 @@ ${recovery.sources.map((name) => {
 <input name="from" placeholder="from: iso time, or 6h / 90m / 2d ago" required>
 <input name="to" placeholder="to (default now)">
 </div>
-<details><summary>sources (all by default)</summary><div class="sources">
+<details><summary>sources (all by default)</summary>
+<button type="button" onclick="this.form.querySelectorAll('[name=source]').forEach(box => box.checked = true)">Select all</button>
+<button type="button" onclick="this.form.querySelectorAll('[name=source]').forEach(box => box.checked = false)">Clear</button>
+<div class="sources">
 ${RECOVERABLE.map(name => `<label><input type="checkbox" name="source" value="${esc(name)}" checked> <code>${esc(name)}</code></label>`).join("")}
 </div></details>
 <button type="submit" class="bad">Recover</button>

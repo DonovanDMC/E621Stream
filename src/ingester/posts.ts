@@ -4,6 +4,7 @@ import { cursorKey } from "../config.ts";
 import { getSnapshots, putSnapshots } from "../db.ts";
 import { e621, request } from "../e621.ts";
 import { publish } from "../events.ts";
+import { getRecovery, isActive } from "../recovery.ts";
 import redis from "../redis.ts";
 
 export interface Post {
@@ -208,32 +209,41 @@ export class PostsFeed {
     }
 
     async poll(): Promise<number> {
-        const cursor = this.cursor ?? await this.init();
+        let cursor = this.cursor ?? await this.init();
+        // a recovery going back over what we're behind on sends it anyway, so there's no catching up to do
+        const recovery = await getRecovery();
+        if (isActive(recovery) && recovery.sources.includes("posts") && Date.parse(recovery.from) <= cursor && Date.parse(recovery.to) > cursor) {
+            Debug("ingester:posts", `recovery ${recovery.id} covers up to ${recovery.to}, skipping ahead`);
+            cursor = this.cursor = Date.parse(recovery.to);
+            await redis.hset(cursorKey, { [UPDATED_FIELD]: String(cursor) });
+        }
+
         // updated_at also changes for votes, favorites and comments
         const since = cursor - OVERLAP_MS;
-        const found = new Map<number, Post>();
-        let caughtUp = false;
+        // each page is handled as it comes in, holding every page of a big backlog at once ran the ingester out of memory
+        const seen = new Set<number>();
+        let newest = cursor, published = 0, caughtUp = false;
         for (let page = 1; page <= MAX_PAGES_PER_POLL && !caughtUp; page++) {
             const posts = await search("order:updated status:any", LIMIT, page);
-            for (const post of posts) {
-                const existing = found.get(post.id);
-                if (Date.parse(post.updated_at) > since && (!existing || existing.updated_at < post.updated_at)) found.set(post.id, post);
+            // posts shift down a page when others are updated while paging, the first copy is never older
+            const fresh = posts.filter(post => Date.parse(post.updated_at) > since && !seen.has(post.id));
+            for (const post of fresh) {
+                seen.add(post.id);
+                newest = Math.max(newest, Date.parse(post.updated_at));
             }
+            // uploads can commit out of id order
+            published += await this.process(fresh, (post, before) => {
+                const isNew = !before && (post.id > this.maxId || Date.now() - Date.parse(post.created_at) < NEW_POST_WINDOW_MS);
+                if (isNew && post.id > this.maxId) this.maxId = post.id;
+                return isNew;
+            });
             const oldest = posts.at(-1);
             if (posts.length < LIMIT || (oldest && Date.parse(oldest.updated_at) <= since)) caughtUp = true;
         }
         if (!caughtUp) Debug("ingester:posts", `more than ${MAX_PAGES_PER_POLL * LIMIT} updates since ${new Date(since).toISOString()}, some were skipped`);
-        if (found.size === 0) return 0;
+        if (seen.size === 0) return 0;
 
-        const posts = [...found.values()];
-        // uploads can commit out of id order
-        const published = await this.process(posts, (post, before) => {
-            const isNew = !before && (post.id > this.maxId || Date.now() - Date.parse(post.created_at) < NEW_POST_WINDOW_MS);
-            if (isNew && post.id > this.maxId) this.maxId = post.id;
-            return isNew;
-        });
-
-        this.cursor = Math.max(cursor, ...posts.map(post => Date.parse(post.updated_at)));
+        this.cursor = newest;
         await redis.hset(cursorKey, { [UPDATED_FIELD]: String(this.cursor), [MAX_ID_FIELD]: String(this.maxId) });
         return published;
     }
