@@ -9,6 +9,7 @@ export const NAV: Array<NavLink> = [
     { href: "/subscriptions/", page: "subscriptions", title: "Subscriptions" },
     { href: "/events/", page: "events", title: "Events" },
     { href: "/replaying/", page: "replaying", title: "Replaying" },
+    { href: "/snapshots/", page: "snapshots", title: "Snapshots" },
     { href: "/compression/", page: "compression", title: "Compression" },
     { href: "/close-codes/", page: "close-codes", title: "Close Codes" },
     { href: "/clients/", page: "clients", title: "Clients" },

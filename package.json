@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@yiffy/debug": "^0.0.1",
-    "e621": "^3.5.1",
+    "e621": "~3.6.0",
     "e621-export-downloader": "1.1.7",
     "marked": "^18.1.2"
   },

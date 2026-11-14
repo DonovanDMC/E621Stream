@@ -1,3 +1,5 @@
+import { TRACKED } from "../ingester/updates.ts";
+
 export const PROTOCOL_VERSION = 1;
 
 export const CloseCodes = {
@@ -25,10 +27,27 @@ export interface IdentifyPayload {
     subscriptions: Array<unknown>;
 }
 
+export interface SnapshotRequest { ids: Array<number>; nonce: string | null; resource: string }
+
 export type ClientMessage
     = | { d: IdentifyPayload; op: "identify" }
         | { d: { subscriptions: Array<unknown> }; op: "subscribe" }
+        | { d?: unknown; op: "snapshot" }
         | { d?: unknown; op: "heartbeat" };
+
+export const SNAPSHOT_RESOURCES = ["post", ...Object.values(TRACKED).map(tracked => tracked.resource)];
+const snapshotResourceSet = new Set<string>(SNAPSHOT_RESOURCES);
+
+export function parseSnapshotRequest(value: unknown, max: number): SnapshotRequest | string {
+    if (!value || typeof value !== "object") return "missing payload";
+    const { resource, ids, nonce } = value as Record<string, unknown>;
+    if (typeof resource !== "string" || !snapshotResourceSet.has(resource)) return `unknown resource "${String(resource)}"`;
+    if (!Array.isArray(ids) || ids.length === 0) return "no ids";
+    if (ids.length > max) return `too many ids (max ${max})`;
+    if (!ids.every(id => Number.isSafeInteger(id) && id > 0)) return "ids must be positive integers";
+    if (nonce !== undefined && (typeof nonce !== "string" || nonce.length > 100)) return "invalid nonce";
+    return { resource, ids: [...new Set(ids as Array<number>)], nonce: nonce ?? null };
+}
 
 export function parseCursor(value: unknown): string | null {
     if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return `${value}-0`;

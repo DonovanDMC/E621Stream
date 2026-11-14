@@ -16,6 +16,8 @@ module E621Stream
     extend(T::Sig)
 
     Listener = T.type_alias { T.proc.params(arg0: T.untyped).void }
+    Snapshots = T.type_alias { T::Hash[Integer, T.nilable(T::Hash[String, T.untyped])] }
+    SnapshotCallback = T.type_alias { T.proc.params(snapshots: Snapshots).void }
     # An event type, `<resource>.*`, `*`, or `{ "type" => ..., "filter" => { ... } }`.
     Subscription = T.type_alias { T.any(String, T::Hash[T.any(String, Symbol), T.untyped]) }
 
@@ -83,6 +85,9 @@ module E621Stream
       @attempt = T.let(0, Integer)
       @last_message = T.let(0.0, Float)
       @last_error = T.let(nil, T.nilable(StreamError))
+      @ready = T.let(false, T::Boolean)
+      @nonce = T.let(0, Integer)
+      @pending_snapshots = T.let({}, T::Hash[String, SnapshotCallback])
     end
 
     # Listens for an event type (like "post.create"), or one of :dispatch (every event), :ready, :replay_complete,
@@ -124,6 +129,19 @@ module E621Stream
       send_message({ op: "subscribe", d: { subscriptions: subscriptions } })
     end
 
+    # Looks up what was last seen of up to 100 records, see https://e621.stream/snapshots/. The block gets them by id,
+    # nil for ones that aren't known. It isn't called if the connection closes first.
+    #
+    #   client.on(:ready) { client.snapshots("post", [1, 2]) { |posts| p(posts[1]&.dig("tags", "general")) } }
+    sig { params(resource: String, ids: T::Array[Integer], block: SnapshotCallback).void }
+    def snapshots(resource, ids, &block)
+      raise("not ready") unless @ready
+
+      nonce = (@nonce += 1).to_s
+      @pending_snapshots[nonce] = block
+      send_message({ op: "snapshot", d: { resource: resource, ids: ids, nonce: nonce } })
+    end
+
     # Closes the connection for good.
     sig { void }
     def close
@@ -148,6 +166,8 @@ module E621Stream
         ensure
           heartbeat.stop
           @connection = nil
+          @ready = false
+          @pending_snapshots.clear
         end
       end
       # anything but a normal close raises out of read
@@ -189,6 +209,7 @@ module E621Stream
         send_message({ op: "identify", d: identify })
       when "ready"
         @attempt = 0
+        @ready = true
         emit("ready", data)
       when "dispatch"
         event = Event.new(id: message["id"], type: message["type"], time: message["time"], data: message["data"], private: message["private"] == true)
@@ -199,6 +220,8 @@ module E621Stream
         emit("replay_complete", data)
       when "subscribed"
         emit("subscribed", data["subscriptions"])
+      when "snapshot"
+        @pending_snapshots.delete(data["nonce"])&.call(data["snapshots"].to_h { |id, snapshot| [id.to_i, snapshot] })
       when "error"
         @last_error = StreamError.new(data["code"], data["message"])
       end

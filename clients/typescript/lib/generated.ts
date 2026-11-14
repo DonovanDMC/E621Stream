@@ -3,7 +3,7 @@
 
 import type { Changes, PostChanges, PostSnapshot, PostStats } from "./changes.ts";
 
-// records, from the e621 module's types (https://www.npmjs.com/package/e621)
+// records, from the e621-openapi module's types (https://www.npmjs.com/package/e621-openapi)
 
 export type PoolCategory = 'collection' | 'series';
 
@@ -686,7 +686,7 @@ export interface ModActionValues {
     mascot_update: { id: number };
     mass_update: { antecedent: string; consequent: string };
     nuke_tag: { tag_name: string };
-    password_reset: { invalidated: boolean; user_id: number };
+    password_reset: { credentials_revoked: boolean; invalidated: boolean; user_id: number };
     pool_delete: { pool_id: number; pool_name: string; user_id: number };
     post_version_hide: { post_id: number; version: number };
     post_version_unhide: { post_id: number; version: number };
@@ -864,4 +864,21 @@ export interface EventDataMap {
     "dmail.create": DMail;
     "private_post_set.add_posts": { post_ids: Array<number>; post_set: PostSet };
     "private_post_set.remove_posts": { post_ids: Array<number>; post_set: PostSet };
+}
+
+/** What `snapshot` sends back for each resource. */
+export interface SnapshotDataMap {
+    post: PostSnapshot;
+    comment: Pick<Comment, "id" | "body" | "is_hidden" | "is_sticky" | "warning_type" | "warning_user_id">;
+    forum_post: Pick<ForumPost, "id" | "body" | "is_hidden" | "warning_type" | "warning_user_id">;
+    forum_topic: Pick<ForumTopic, "id" | "title" | "category_id" | "is_hidden" | "is_locked" | "is_sticky">;
+    tag_alias: Pick<TagAlias, "id" | "status" | "antecedent_name" | "consequent_name" | "reason" | "approver_id" | "forum_topic_id">;
+    tag_implication: Pick<TagImplication, "id" | "status" | "antecedent_name" | "consequent_name" | "reason" | "approver_id" | "forum_topic_id">;
+    bulk_update_request: Pick<BulkUpdateRequest, "id" | "status" | "title" | "script" | "approver_id" | "forum_topic_id">;
+    help_page: Pick<HelpPage, "id" | "name" | "title" | "wiki_page" | "related">;
+    takedown: Pick<Takedown, "id" | "status">;
+    post_flag: Pick<PostFlag, "id" | "is_resolved">;
+    post_set: Pick<PostSet, "id" | "name" | "shortname" | "description" | "is_public" | "transfer_on_delete" | "post_ids">;
+    news_update: Pick<NewsUpdate, "id" | "message">;
+    post_replacement: Pick<PostReplacement, "id" | "status" | "approver_id" | "reason" | "post_id">;
 }

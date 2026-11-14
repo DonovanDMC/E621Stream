@@ -122,6 +122,31 @@ describe("E621Stream", () => {
         expect(closes).toEqual([false]);
     });
 
+    test("snapshots are matched to their reply", async () => {
+        const client = stream().connect();
+        await tick();
+        const socket = FakeSocket.sockets[0]!;
+        expect(await client.snapshots("post", [1]).catch((err: unknown) => String(err))).toBe("Error: not ready");
+        socket.receive({ op: "ready", d: {} });
+        const posts = client.snapshots("post", [1, 2]), comments = client.snapshots("comment", [3]);
+        expect(socket.sent.slice(-2)).toEqual([{ op: "snapshot", d: { resource: "post", ids: [1, 2], nonce: "1" } }, { op: "snapshot", d: { resource: "comment", ids: [3], nonce: "2" } }]);
+        socket.receive({ op: "snapshot", d: { resource: "comment", nonce: "2", snapshots: { 3: { id: 3, body: "hi" } } } });
+        socket.receive({ op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { 1: { id: 1, rating: "s" }, 2: null } } });
+        expect(await posts).toEqual({ 1: { id: 1, rating: "s" }, 2: null });
+        expect((await comments)[3]?.body).toBe("hi");
+        client.close();
+    });
+
+    test("snapshots waiting on a reply fail when the connection closes", async () => {
+        const client = stream().connect();
+        await tick();
+        FakeSocket.sockets[0]!.receive({ op: "ready", d: {} });
+        const posts = client.snapshots("post", [1]);
+        FakeSocket.sockets[0]!.receive({ op: "error", d: { code: CloseCodes.DECODE_ERROR, message: "too many ids (max 100)" } });
+        FakeSocket.sockets[0]!.close(CloseCodes.DECODE_ERROR);
+        expect(await posts.catch((err: unknown) => String(err))).toBe("StreamError: too many ids (max 100)");
+    });
+
     test("subscribe sends the change and keeps it for reconnecting", async () => {
         const client = stream().connect();
         await tick();

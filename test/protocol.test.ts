@@ -3,7 +3,7 @@ import { UnexpectedResponseError } from "e621";
 
 import { parseAuthHeader, parseBasicAuth } from "../src/gateway/auth.ts";
 import { isInvalidGrant, parseToken } from "../src/gateway/oauth.ts";
-import { compareIds, parseCursor } from "../src/gateway/protocol.ts";
+import { compareIds, parseCursor, parseSnapshotRequest } from "../src/gateway/protocol.ts";
 import { diff } from "../src/ingester/posts.ts";
 
 describe("cursors", () => {
@@ -20,6 +20,17 @@ describe("cursors", () => {
         expect(compareIds("1-1", "1-2")).toBeLessThan(0);
         expect(compareIds("1-1", "1-1")).toBe(0);
     });
+});
+
+test("snapshot requests", () => {
+    expect(parseSnapshotRequest({ resource: "post", ids: [1, 2, 2], nonce: "a" }, 100)).toEqual({ resource: "post", ids: [1, 2], nonce: "a" });
+    expect(parseSnapshotRequest({ resource: "comment", ids: [5] }, 100)).toEqual({ resource: "comment", ids: [5], nonce: null });
+    expect(parseSnapshotRequest({ resource: "pool", ids: [1] }, 100)).toBe("unknown resource \"pool\"");
+    expect(parseSnapshotRequest({ resource: "post", ids: [] }, 100)).toBe("no ids");
+    expect(parseSnapshotRequest({ resource: "post", ids: [1, 2, 3] }, 2)).toBe("too many ids (max 2)");
+    expect(parseSnapshotRequest({ resource: "post", ids: ["1"] }, 100)).toBe("ids must be positive integers");
+    expect(parseSnapshotRequest({ resource: "post", ids: [1], nonce: 5 }, 100)).toBe("invalid nonce");
+    expect(parseSnapshotRequest(undefined, 100)).toBe("missing payload");
 });
 
 test("basic auth header", () => {

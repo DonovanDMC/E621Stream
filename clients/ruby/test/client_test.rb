@@ -146,6 +146,21 @@ class ClientTest < Minitest::Test
     assert_equal(1, connector.connections.size)
   end
 
+  def test_snapshots_get_their_reply
+    reply = { op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { "1" => { "id" => 1, "rating" => "s" }, "2" => nil } } }
+    connector = FakeConnector.new([HELLO, { op: "ready", d: {} }, reply, *fatal])
+    stream = client(connector)
+    posts = nil
+    stream.on(:ready) { stream.snapshots("post", [1, 2]) { |snapshots| posts = snapshots } }
+    stream.run
+    assert_equal({ "op" => "snapshot", "d" => { "resource" => "post", "ids" => [1, 2], "nonce" => "1" } }, connector.connections[0].sent[1])
+    assert_equal({ 1 => { "id" => 1, "rating" => "s" }, 2 => nil }, posts)
+  end
+
+  def test_snapshots_need_ready
+    assert_raises(RuntimeError) { client(FakeConnector.new).snapshots("post", [1]) { nil } }
+  end
+
   def test_event_types_match_the_server
     assert_includes(E621Stream::Events::EVENT_TYPES, "post.create")
     assert_equal(%w[dmail.create private_post_set.add_posts private_post_set.remove_posts], E621Stream::Events::PRIVATE_EVENT_TYPES)

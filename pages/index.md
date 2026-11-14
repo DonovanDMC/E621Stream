@@ -9,6 +9,7 @@ wss://e621.stream/ws
 - [Subscriptions](/subscriptions/) - picking & filtering events
 - [Events](/events/) - every event type, and what they send
 - [Replaying](/replaying/) - catching up on what you missed
+- [Snapshots](/snapshots/) - looking up what we last saw of a post (or comment, etc)
 - [Compression](/compression/)
 - [Close Codes](/close-codes/)
 - [Clients](/clients/) - libraries for typescript & ruby
@@ -54,6 +55,7 @@ Or, log in at [/authorize](/authorize) with your e621 account and make a token t
 |---|---|---|
 | `identify` | `{ auth, subscriptions, cursor?, client? }` | has to be first. `client` is a name for your client, it's only used in logs |
 | `subscribe` | `{ subscriptions }` | replaces your subscriptions, answered with `subscribed` |
+| `snapshot` | `{ resource, ids, nonce? }` | answered with `snapshot`, see [Snapshots](/snapshots/) |
 | `heartbeat` | none | optional, answered with `heartbeat_ack` |
 
 ### Server -> Client
@@ -65,6 +67,7 @@ Or, log in at [/authorize](/authorize) with your e621 account and make a token t
 | `dispatch` | `id`, `type`, `time` (when it happened on e621) and `data`, not in `d` |
 | `replay_complete` | `{ events, cursor }` |
 | `subscribed` | `{ subscriptions }` |
+| `snapshot` | `{ resource, nonce, snapshots }` |
 | `heartbeat_ack` | `{ cursor }`, the last event you were sent |
 | `error` | `{ code, message }`, right before you're disconnected with that code |
 

@@ -1,7 +1,7 @@
 import Debug from "@yiffy/debug";
 
 import { cursorKey } from "../config.ts";
-import { getSnapshots, putSnapshots, versionOf, type Snapshot } from "../db.ts";
+import { deleteSnapshots, getSnapshots, putSnapshots, versionOf, type Snapshot } from "../db.ts";
 import { e621, getHTML, request } from "../e621.ts";
 import { publish, type EventType } from "../events.ts";
 import redis from "../redis.ts";
@@ -209,9 +209,12 @@ export class UpdateFeed {
     }
 
     async handle(all: Array<Item>, emitUnknown: boolean): Promise<number> {
-        const items = this.source.private ? all.filter(item => !this.source.private!(item)) : all;
-        if (items.length === 0) return 0;
         const { members, resource } = this.source;
+        const hidden = this.source.private ? all.filter(item => this.source.private!(item)) : [];
+        // so a set that went private can't be looked up anymore
+        await deleteSnapshots(resource, hidden.map(item => item.id));
+        const items = hidden.length === 0 ? all : all.filter(item => !hidden.includes(item));
+        if (items.length === 0) return 0;
         const previous = await getSnapshots(resource, items.map(item => item.id));
         const writes: Array<Snapshot> = [];
         let published = 0;

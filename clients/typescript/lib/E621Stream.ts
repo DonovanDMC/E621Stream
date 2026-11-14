@@ -1,6 +1,8 @@
 import Emitter from "./Emitter.ts";
 import { CloseCodes, type EventType, type PrivateEventType, type StreamEvent, type Subscription } from "./events.ts";
 
+import type { SnapshotDataMap } from "./generated.ts";
+
 export interface Options {
     /** Your e621 username & api key, or a token from https://e621.stream/authorize. */
     auth?: { apiKey: string; username: string } | { token: string };
@@ -27,6 +29,13 @@ export interface Ready {
     subscriptions: Array<Subscription>;
     user: { id: number; level: number; level_string: string; name: string } | null;
 }
+
+export type SnapshotResource = keyof SnapshotDataMap;
+
+/** Keyed by id, `null` for ones that aren't known. */
+export type Snapshots<R extends SnapshotResource> = Record<number, SnapshotDataMap[R] | null>;
+
+interface PendingSnapshot { reject(err: Error): void; resolve(snapshots: Snapshots<SnapshotResource>): void }
 
 export interface ClientEvents {
     close: [{ code: number; reason: string; reconnecting: boolean }];
@@ -78,6 +87,9 @@ export class E621Stream extends Emitter<Listeners> {
     private heartbeat: ReturnType<typeof setInterval> | null = null;
     private lastError: StreamError | null = null;
     private lastHeartbeatAck = true;
+    private nonce = 0;
+    private pendingSnapshots = new Map<string, PendingSnapshot>();
+    private ready = false;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private socket: WebSocket | null = null;
     cursor: string | null;
@@ -111,6 +123,7 @@ export class E621Stream extends Emitter<Listeners> {
             }
             case "ready": {
                 this.attempt = 0;
+                this.ready = true;
                 this.emit("ready", message.d as Ready);
                 break;
             }
@@ -130,6 +143,15 @@ export class E621Stream extends Emitter<Listeners> {
                 this.emit("subscribed", (message.d as { subscriptions: Array<Subscription> }).subscriptions);
                 break;
             }
+            case "snapshot": {
+                const { nonce, snapshots } = message.d as { nonce: string | null; snapshots: Snapshots<SnapshotResource> };
+                const pending = nonce === null ? undefined : this.pendingSnapshots.get(nonce);
+                if (pending) {
+                    this.pendingSnapshots.delete(nonce!);
+                    pending.resolve(snapshots);
+                }
+                break;
+            }
             case "heartbeat_ack": {
                 this.lastHeartbeatAck = true;
                 break;
@@ -145,8 +167,11 @@ export class E621Stream extends Emitter<Listeners> {
     private onClose(code: number, reason: string): void {
         this.stopHeartbeat();
         this.socket = null;
+        this.ready = false;
         const error = this.lastError;
         this.lastError = null;
+        for (const pending of this.pendingSnapshots.values()) pending.reject(error ?? new StreamError(code, reason || "connection closed"));
+        this.pendingSnapshots.clear();
         const reconnecting = !this.closing && this.options.reconnect !== false && !FATAL.has(code);
         if (error) this.emit("error", error);
         this.emit("close", { code, reason: error?.message ?? reason, reconnecting });
@@ -233,6 +258,23 @@ export class E621Stream extends Emitter<Listeners> {
             this.onClose(1006, "couldn't get the websocket url");
         });
         return this;
+    }
+
+    /**
+     * Get what was last seen of up to 100 records. Only the fields update events are compared on are kept, see https://e621.stream/snapshots/
+     * @example
+     * ```ts
+     * const posts = await stream.snapshots("post", [1, 2, 3]);
+     * console.log(posts[1]?.tags);
+     * ```
+     */
+    async snapshots<R extends SnapshotResource>(resource: R, ids: Array<number>): Promise<Snapshots<R>> {
+        if (!this.ready) throw new Error("not ready");
+        const nonce = String(++this.nonce);
+        return new Promise((resolve, reject) => {
+            this.pendingSnapshots.set(nonce, { resolve: resolve as PendingSnapshot["resolve"], reject });
+            this.send({ op: "snapshot", d: { resource, ids, nonce } });
+        });
     }
 
     /** Replace the current subscriptions. */

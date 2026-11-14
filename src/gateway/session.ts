@@ -9,10 +9,12 @@ import {
     maxBufferedBytes,
     maxClientMessagesPerMinute,
     maxConnectionsPerUser,
+    maxSnapshotIds,
     maxSubscriptions,
     replayBatchSize,
     streamKey,
 } from "../config.ts";
+import { getSnapshots } from "../db.ts";
 import { dispatchFrame, EVENT_TYPES, parseEntry, type StreamEvent } from "../events.ts";
 import redis, { type StreamEntry } from "../redis.ts";
 
@@ -22,7 +24,7 @@ import { compile, FilterError, matches, type CompiledSubscription, type Subscrip
 import { isBanned } from "./moderation.ts";
 import { parseToken } from "./oauth.ts";
 import { removePrivate, updatePrivate, type PrivateEvent, type PrivateMember } from "./private.ts";
-import { CloseCodes, compareIds, parseCursor, PROTOCOL_VERSION, type ClientMessage, type CloseCode, type IdentifyPayload } from "./protocol.ts";
+import { CloseCodes, compareIds, parseCursor, parseSnapshotRequest, PROTOCOL_VERSION, type ClientMessage, type CloseCode, type IdentifyPayload } from "./protocol.ts";
 
 import type { ServerWebSocket } from "bun";
 
@@ -219,6 +221,22 @@ export class Session {
         return this.state === state;
     }
 
+    private async lookup(d: unknown): Promise<void> {
+        const request = parseSnapshotRequest(d, maxSnapshotIds);
+        if (typeof request === "string") {
+            this.close(CloseCodes.DECODE_ERROR, request);
+            return;
+        }
+        const found = await getSnapshots(request.resource, request.ids);
+        if (this.is("closed")) return;
+        const snapshots: Record<number, Record<string, unknown> | null> = {};
+        for (const id of request.ids) {
+            const data = found.get(id);
+            snapshots[id] = data ? { id, ...data } : null;
+        }
+        this.send({ op: "snapshot", d: { resource: request.resource, nonce: request.nonce, snapshots } });
+    }
+
     private async replay(cursor: string): Promise<void> {
         let from = cursor;
         let sent = 0;
@@ -335,6 +353,14 @@ export class Session {
                 const subs = this.compileSubscriptions((msg.d as { subscriptions?: unknown } | undefined)?.subscriptions);
                 if (!subs || !this.setSubscriptions(subs)) return;
                 this.send({ op: "subscribed", d: { subscriptions: subs.map(s => s.source) } });
+                break;
+            }
+            case "snapshot": {
+                if (this.state === "pending") {
+                    this.close(CloseCodes.NOT_IDENTIFIED, "identify first");
+                    return;
+                }
+                await this.lookup(msg.d);
                 break;
             }
             case "heartbeat": {

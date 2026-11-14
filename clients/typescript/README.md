@@ -44,4 +44,13 @@ Listen for an event type with `on("post.create", ...)`, or everything with `on("
 
 Private events like `dmail.create` have to be subscribed to by name.
 
-Records like `LegacyPost`, `Comment` and `ForumTopic` come from the [e621 module](https://www.npmjs.com/package/e621)'s types, and are exported here too. Mod action events are typed per action, so checking `event.data.action` narrows `event.data.values`.
+`stream.snapshots(resource, ids)` gets what was last seen of up to 100 records at once (see [Snapshots](https://e621.stream/snapshots/)), keyed by id with `null` for ones that aren't known. It throws if you aren't ready yet, and rejects if the connection closes before the reply.
+
+```ts
+stream.on("ready", async () => {
+    const posts = await stream.snapshots("post", [6843484, 6843485]);
+    console.log(posts[6843484]?.tags?.general);
+});
+```
+
+Records like `LegacyPost`, `Comment` and `ForumTopic` come from [e621-openapi](https://www.npmjs.com/package/e621-openapi)'s types, and are exported here too. Mod action events are typed per action, so checking `event.data.action` narrows `event.data.values`.
