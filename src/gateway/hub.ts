@@ -1,7 +1,8 @@
 import Debug from "@yiffy/debug";
 
 import { streamKey } from "../config.ts";
-import { isNotice, parseEntry, type StreamItem } from "../events.ts";
+import { dispatchFrame, isNotice, noticeFrame, parseEntry, type StreamItem } from "../events.ts";
+import { logEvent } from "../logs.ts";
 import { createRedis, type StreamEntry } from "../redis.ts";
 
 import { sessions } from "./session.ts";
@@ -11,7 +12,9 @@ export const hubStats = { lastId: null as string | null, lastEventAt: null as st
 const reader = createRedis();
 
 function fanOut(event: StreamItem): void {
-    for (const session of sessions) session.offer(event);
+    let sent = 0;
+    for (const session of sessions) if (session.offer(event)) sent++;
+    logEvent(() => isNotice(event) ? noticeFrame(event) : dispatchFrame(event), sent);
 }
 
 export async function startHub(): Promise<void> {

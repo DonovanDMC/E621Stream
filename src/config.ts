@@ -53,6 +53,8 @@ export const idlePollScale = int("IDLE_POLL_SCALE", 10);
 
 export const logDir = Bun.env.LOG_DIR ?? "logs";
 export const logRetentionDays = int("LOG_RETENTION_DAYS", 14);
+// every event the gateway sends out, one line each. it's the full event, so it gets big
+export const logEvents = bool("LOG_EVENTS", true);
 
 // stream retention
 export const retentionHours = int("RETENTION_HOURS", 24);

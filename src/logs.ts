@@ -1,7 +1,7 @@
 import { accessSync, constants, createWriteStream, mkdirSync, readdirSync, rmSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
 
-import { e621BaseURL, egressProxies, logDir, logRetentionDays } from "./config.ts";
+import { e621BaseURL, egressProxies, logDir, logEvents, logRetentionDays } from "./config.ts";
 import { count } from "./metrics.ts";
 
 class DailyLog {
@@ -123,8 +123,16 @@ function openLogs(): boolean {
     }
 }
 
+let events: DailyLog | null = null;
+
+// sent is how many clients on this gateway got it
+export function logEvent(frame: () => string, sent: number): void {
+    events?.write(`${new Date().toISOString()} ${sent} ${frame()}\n`);
+}
+
 export function startLogging(role: string): void {
     const files = openLogs();
+    if (files && logEvents) events = new DailyLog(`events-${role}`);
     if (files) {
         const app = new DailyLog(role);
         tee(process.stdout, app);

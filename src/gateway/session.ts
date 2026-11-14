@@ -394,13 +394,14 @@ export class Session {
         }
     }
 
-    offer(event: StreamItem): void {
-        if (this.state === "live") {
-            this.deliver(event);
-        } else if (this.state === "replaying") {
+    // returns whether it was sent now, events held for after a replay don't count
+    offer(event: StreamItem): boolean {
+        if (this.state === "live") return this.deliver(event) || isNotice(event);
+        if (this.state === "replaying") {
             this.backlog.push(event);
             if (this.backlog.length > MAX_BACKLOG) this.close(CloseCodes.SLOW_CONSUMER, "replay too slow");
         }
+        return false;
     }
 
     async recheckAuth(): Promise<void> {
