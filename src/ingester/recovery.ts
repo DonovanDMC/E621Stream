@@ -6,16 +6,22 @@ import { getRecovery, notice, recoveryContext, saveRecovery, type Recovery } fro
 import redis, { fieldsToObject, type StreamEntry } from "../redis.ts";
 
 import { Feed, FEEDS } from "./feeds.ts";
-import { PostsFeed } from "./posts.ts";
+import { PostsFeed, type PostsCheckpoint } from "./posts.ts";
 import { UpdateFeed, UPDATES } from "./updates.ts";
 
 class Cancelled extends Error {}
 
-type Run = (from: number, to: number, stop: () => Promise<void>, sent: Map<string, Set<number>>) => Promise<number>;
+/** a source's saved spot, `save` also checks for a cancel. the rest is shown on the status page while it runs */
+export interface Checkpoint<T = unknown> {
+    state: T | undefined;
+    save(state: T, progress: { detail: string; events: number; fraction: number }): Promise<void>;
+}
+
+type Run = (from: number, to: number, stop: () => Promise<void>, sent: Map<string, Set<number>>, checkpoint: Checkpoint) => Promise<number>;
 
 // window mode update sources only ever see their newest page, so there's nothing to go back through
 const RUNS: Record<string, Run> = {
-    posts: (from, to, stop, sent) => new PostsFeed().recover(from, to, sent.get("post.create") ?? new Set(), stop),
+    posts: (from, to, stop, sent, checkpoint) => new PostsFeed().recover(from, to, sent.get("post.create") ?? new Set(), stop, checkpoint as Checkpoint<PostsCheckpoint>),
     ...Object.fromEntries(FEEDS.map(source => [source.name, ((from, to, stop, sent): Promise<number> => new Feed(source).recover(from, to, sent.get(source.event) ?? new Set(), stop)) satisfies Run])),
     ...Object.fromEntries(UPDATES.filter(source => source.mode === "ordered").map(source => [source.name, ((from, to, stop): Promise<number> => new UpdateFeed(source).recover(from, to, stop)) satisfies Run])),
 };
@@ -76,9 +82,20 @@ async function run(recovery: Recovery): Promise<void> {
             }
             progress.status = "running";
             await save();
+            const checkpoint: Checkpoint = {
+                state: progress.checkpoint,
+                save: async (state, { detail, events, fraction }) => {
+                    Object.assign(progress, { checkpoint: state, detail, events, fraction });
+                    recovery.events = Object.values(recovery.progress).reduce((total, p) => total + p.events, 0);
+                    await save();
+                },
+            };
             try {
-                progress.events = await recoveryContext.run(recovery.id, () => fn(from, to, stop, sent));
+                progress.events = await recoveryContext.run(recovery.id, () => fn(from, to, stop, sent, checkpoint));
                 progress.status = "done";
+                delete progress.checkpoint;
+                delete progress.detail;
+                progress.fraction = 1;
                 Debug("ingester:recovery", `${recovery.id}: ${name} done, ${progress.events} event(s)`);
             } catch (err) {
                 if (err instanceof Cancelled) throw err;

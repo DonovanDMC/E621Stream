@@ -7,6 +7,8 @@ import { publish } from "../events.ts";
 import { getRecovery, isActive } from "../recovery.ts";
 import redis from "../redis.ts";
 
+import type { Checkpoint } from "./recovery.ts";
+
 export interface Post {
     approver_id: number | null;
     change_seq: number;
@@ -132,6 +134,19 @@ export function diff(before: Partial<Snapshot>, after: Snapshot): Changes {
     return changes;
 }
 
+/** where a posts recovery got to */
+export interface PostsCheckpoint {
+    events: number;
+    page: number;
+    /** id ranges still to go through, the first is the current one */
+    ranges: Array<[number, number]>;
+    /** how far back the current range has gotten, by updated_at */
+    reached: string | null;
+    /** the highest post id when it started, the ranges split up 1 to this */
+    total: number;
+    uploads: boolean;
+}
+
 export class PostsFeed {
     private cursor: number | null = null;
     private maxId = 0;
@@ -251,31 +266,62 @@ export class PostsFeed {
     // goes through every post updated between from and to. snapshots make anything already sent a no-op. there's only
     // MAX_PAGE pages of any search, a range of ids that has more updates than that is split in half
     // created is the posts that already have a post.create on the stream
-    async recover(from: number, to: number, created: Set<number>, stop: () => Promise<void>): Promise<number> {
-        const [newest] = await search("status:any", 1, 1);
-        if (!newest) return 0;
-        let published = await this.recoverUploads(from, to, created, stop);
-        const range = async (lo: number, hi: number): Promise<void> => {
-            for (let page = 1; page <= MAX_PAGE; page++) {
+    // its spot is saved after every page, so a restart carries on from there instead of starting over
+    async recover(from: number, to: number, created: Set<number>, stop: () => Promise<void>, checkpoint: Checkpoint<PostsCheckpoint>): Promise<number> {
+        let state = checkpoint.state;
+        if (!state) {
+            const [newest] = await search("status:any", 1, 1);
+            if (!newest) return 0;
+            state = { uploads: false, ranges: [[1, newest.id]], page: 1, reached: null, total: newest.id, events: 0 };
+        } else {
+            Debug("ingester:posts", `recovery: resuming ${state.ranges.length} range(s) at page ${state.page} of ${state.ranges[0]?.join("..") ?? "none"}`);
+        }
+        const save = async (s: PostsCheckpoint): Promise<void> => {
+            const [range] = s.ranges;
+            const detail = !s.uploads ? "uploads" : !range ? "finishing"
+                : `ids ${range[0]}..${range[1]}${s.ranges.length > 1 ? ` (${s.ranges.length - 1} more after)` : ""}, page ${s.page}${s.reached ? `, back to ${s.reached}` : ""}`;
+            // ids in ranges that are done, plus how far back in the window the current range has gotten
+            const left = s.ranges.reduce((total, [lo, hi]) => total + hi - lo + 1, 0);
+            const current = range && s.reached ? (range[1] - range[0] + 1) * (to - Date.parse(s.reached)) / (to - from) : 0;
+            const fraction = s.uploads ? Math.min(1, Math.max(0, (s.total - left + current) / s.total)) : 0;
+            await checkpoint.save(s, { detail, events: s.events, fraction });
+        };
+        if (!state.uploads) {
+            await save(state);
+            state.events += await this.recoverUploads(from, to, created, stop);
+            state.uploads = true;
+            await save(state);
+        }
+
+        // the first range is the one being gone through, splitting it puts both halves first so the order is the same
+        while (state.ranges.length !== 0) {
+            const [lo, hi] = state.ranges[0]!;
+            let finished = false;
+            for (; state.page <= MAX_PAGE && !finished; state.page++) {
                 await stop();
-                const posts = await search(`order:updated status:any id:${lo}..${hi}`, LIMIT, page);
-                published += await this.process(posts.filter((post) => {
+                const posts = await search(`order:updated status:any id:${lo}..${hi}`, LIMIT, state.page);
+                state.events += await this.process(posts.filter((post) => {
                     const at = Date.parse(post.updated_at);
                     return at > from && at <= to;
                 }), (post, before) => !before && Date.parse(post.created_at) >= from);
                 const oldest = posts.at(-1);
-                if (posts.length < LIMIT || !oldest || Date.parse(oldest.updated_at) <= from) return;
+                finished = posts.length < LIMIT || !oldest || Date.parse(oldest.updated_at) <= from;
+                // kept inside the window, the first pages are posts updated after it
+                if (oldest) state.reached = new Date(Math.min(to, Math.max(from, Date.parse(oldest.updated_at)))).toISOString();
+                await save({ ...state, page: state.page + 1 });
             }
-            if (lo === hi) {
-                Debug("ingester:posts", `post ${lo} has more than ${MAX_PAGE} pages of updates, somehow`);
-                return;
+            if (finished || lo === hi) {
+                if (!finished) Debug("ingester:posts", `post ${lo} has more than ${MAX_PAGE} pages of updates, somehow`);
+                state.ranges.shift();
+            } else {
+                const mid = Math.floor((lo + hi) / 2);
+                Debug("ingester:posts", `recovery: too many updates in ${lo}..${hi}, splitting`);
+                state.ranges.splice(0, 1, [lo, mid], [mid + 1, hi]);
             }
-            const mid = Math.floor((lo + hi) / 2);
-            Debug("ingester:posts", `recovery: too many updates in ${lo}..${hi}, splitting`);
-            await range(lo, mid);
-            await range(mid + 1, hi);
-        };
-        await range(1, newest.id);
-        return published;
+            state.page = 1;
+            state.reached = null;
+            await save(state);
+        }
+        return state.events;
     }
 }

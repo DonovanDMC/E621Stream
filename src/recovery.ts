@@ -8,8 +8,14 @@ import redis from "./redis.ts";
 export type RecoveryStatus = "pending" | "running" | "done" | "failed" | "cancelled";
 
 export interface SourceProgress {
+    /** where a source that saves its spot got to, so a restart carries on from there */
+    checkpoint?: unknown;
+    /** where it is, for the status page */
+    detail?: string;
     error: string | null;
     events: number;
+    /** how far through the window it is, 0-1, for sources that know */
+    fraction?: number;
     status: "pending" | "running" | "done" | "failed";
 }
 

@@ -270,7 +270,7 @@ export async function statusPage(): Promise<string> {
     const RECOVERY_CLASS: Record<string, string> = { ...STATUS_CLASS, cancelled: "dim" };
     const recoveryRows = recovery ? recovery.sources.map((name) => {
         const p = recovery.progress[name];
-        return `<tr><td>${esc(name)}</td><td class="${RECOVERY_CLASS[p?.status ?? "pending"] ?? ""}">${esc(p?.status ?? "pending")}</td><td class="n">${num(p?.events ?? 0)}</td><td class="detail">${esc(p?.error ?? "")}</td></tr>`;
+        return `<tr><td>${esc(name)}</td><td class="${RECOVERY_CLASS[p?.status ?? "pending"] ?? ""}">${esc(p?.status ?? "pending")}</td><td>${p?.fraction === undefined ? "" : `<div class="bar"><div style="width:${Math.round(p.fraction * 100)}%"></div></div>${(p.fraction * 100).toFixed(1)}%`}</td><td class="n">${num(p?.events ?? 0)}</td><td class="detail">${esc(p?.error ?? p?.detail ?? "")}</td></tr>`;
     }).join("") : "";
     const typeRows = events.by_type.map(t => `<tr><td>${esc(t.type)}</td><td class="n">${num(t.last_hour)}</td><td class="n">${num(t.last_24h)}</td><td class="n">${num(t.total)}</td></tr>`).join("");
 
@@ -337,7 +337,7 @@ ${recovery ? `<h2>Recovery</h2>
 <p>${recovery.active ? "Running" : "The last one"}: ${window}, <span class="${RECOVERY_CLASS[recovery.status] ?? ""}">${esc(recovery.status)}</span>, ${num(recovery.events)} event(s) sent${recovery.started_at ? `, started ${ago(recovery.started_at)}` : ""}${recovery.finished_at ? `, finished ${ago(recovery.finished_at)}` : ""}.${recovery.error ? ` <span class="bad">${esc(recovery.error)}</span>` : ""}</p>
 <p class="dim">Going back over a window of time we missed events in, and sending what wasn't sent the first time. See <a href="/replaying/#recoveries">Recoveries</a>.</p>
 <div class="table-wrap"><table>
-<tr><th>source</th><th>status</th><th>events</th><th></th></tr>
+<tr><th>source</th><th>status</th><th>progress</th><th>events</th><th></th></tr>
 ${recoveryRows}
 </table></div>` : ""}
 
