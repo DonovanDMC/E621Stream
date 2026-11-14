@@ -10,7 +10,7 @@ Everything that update events are compared against is kept, and you can ask for 
 {"op":"snapshot","d":{"resource":"post","nonce":"abc","snapshots":{"6843484":{"id":6843484,"md5":"...","rating":"s","tags":{"general":["fox"]},"change_seq":123},"6843485":null},"done":true}}
 ```
 
-Every id you asked for is in `snapshots`, `null` if we don't have it. More than 100 ids are answered over several `snapshot` messages of up to 100 each, all with the same `nonce`. Keep merging `snapshots` until one has `done: true`, events can arrive in between. `nonce` is optional, it's sent back as is (or `null`) so you can tell replies apart. It counts towards the 60 messages a minute like anything else, so ask for a bunch at once rather than one at a time.
+Every id you asked for is in `snapshots`, `null` if we don't have it. More than 100 ids are answered over several `snapshot` messages of up to 100 each, all with the same `nonce`. Keep merging `snapshots` until one has `done: true`, events can arrive in between. `nonce` is optional, it's sent back as is (or `null`) so you can tell replies apart. It counts towards the 60 messages a minute (120 for privileged+) like anything else, so ask for a bunch at once rather than one at a time.
 
 These are what we last saw, not what's on e621 right now. They're only the fields we track, not the full record:
 

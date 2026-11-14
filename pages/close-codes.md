@@ -10,7 +10,7 @@
 | 4005 | already identified |
 | 4006 | invalid subscription |
 | 4007 | invalid cursor |
-| 4008 | rate limited (over 60 messages a minute) |
+| 4008 | rate limited (over 60 messages a minute, 120 for privileged+ users) |
 | 4009 | too slow, reconnect with your last cursor |
 | 4010 | too many connections (per ip or per account) |
 | 4011 | your credentials stopped working |

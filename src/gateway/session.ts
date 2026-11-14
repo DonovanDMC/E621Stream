@@ -9,6 +9,7 @@ import {
     maxBufferedBytes,
     maxClientMessagesPerMinute,
     maxConnectionsPerUser,
+    maxPrivilegedMessagesPerMinute,
     maxSnapshotIds,
     maxSubscriptions,
     replayBatchSize,
@@ -37,6 +38,8 @@ export interface SocketData {
 }
 
 export type State = "pending" | "replaying" | "live" | "closed";
+
+const PRIVILEGED_LEVEL = 30;
 
 const MAX_BACKLOG = 50_000;
 
@@ -329,7 +332,8 @@ export class Session {
         const now = Date.now();
         this.messageTimes = this.messageTimes.filter(t => now - t < 60_000);
         this.messageTimes.push(now);
-        if (this.messageTimes.length > maxClientMessagesPerMinute) {
+        const limit = (this.user?.level ?? 0) >= PRIVILEGED_LEVEL ? maxPrivilegedMessagesPerMinute : maxClientMessagesPerMinute;
+        if (this.messageTimes.length > limit) {
             this.close(CloseCodes.RATE_LIMITED, "too many messages");
             return;
         }

@@ -83,5 +83,7 @@ export const maxSnapshotIds = int("MAX_SNAPSHOT_IDS", 1000);
 // big snapshot requests are answered over several messages of this many
 export const snapshotChunkSize = int("SNAPSHOT_CHUNK_SIZE", 100);
 export const maxClientMessagesPerMinute = int("MAX_CLIENT_MESSAGES_PER_MINUTE", 60);
+// for privileged+ (level 30+) users
+export const maxPrivilegedMessagesPerMinute = int("MAX_PRIVILEGED_MESSAGES_PER_MINUTE", 120);
 export const maxBufferedBytes = int("MAX_BUFFERED_BYTES", 16 * 1024 * 1024);
 export const replayBatchSize = int("REPLAY_BATCH_SIZE", 500);
