@@ -11,6 +11,7 @@ import { startDataCounts } from "./data.ts";
 import { Feed, FEEDS } from "./feeds.ts";
 import { idleScale, onWake, startIdleWatch } from "./idle.ts";
 import { PostsFeed } from "./posts.ts";
+import { startRecoveryWatch } from "./recovery.ts";
 import { UpdateFeed, UPDATES } from "./updates.ts";
 
 interface Pollable {
@@ -91,6 +92,7 @@ export async function startIngester(): Promise<void> {
         run(feed);
     }
     setInterval(() => void trim().catch((err: unknown) => { Debug("ingester:trim", `failed: ${String(err)}`); }), 60_000);
+    startRecoveryWatch();
     if (backfillEnabled) startBackfill();
     startDataCounts();
 }

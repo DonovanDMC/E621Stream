@@ -17,7 +17,8 @@ import {
     streamKey,
 } from "../config.ts";
 import { getSnapshots } from "../db.ts";
-import { dispatchFrame, EVENT_TYPES, parseEntry, type StreamEvent } from "../events.ts";
+import { dispatchFrame, EVENT_TYPES, isNotice, noticeFrame, parseEntry, type StreamItem } from "../events.ts";
+import { getRecovery, isActive, notice } from "../recovery.ts";
 import redis, { type StreamEntry } from "../redis.ts";
 
 import { describeCredentials, verify, type Credentials, type E621User } from "./auth.ts";
@@ -70,7 +71,7 @@ export function connectionCount(ip: string): number {
 }
 
 export class Session {
-    private backlog: Array<StreamEvent> = [];
+    private backlog: Array<StreamItem> = [];
     private canPrivate = false;
     private compressor: StreamCompressor | null;
     private credentials: Credentials | null = null;
@@ -125,7 +126,13 @@ export class Session {
         }
     }
 
-    private deliver(event: StreamEvent): boolean {
+    // notices go to everyone and don't count as sent events
+    private deliver(event: StreamItem): boolean {
+        if (isNotice(event)) {
+            this.lastSent = event.id;
+            this.send(noticeFrame(event));
+            return false;
+        }
         if (!this.subscriptions.some(sub => matches(sub, event))) return false;
         this.lastSent = event.id;
         this.send(dispatchFrame(event));
@@ -207,16 +214,20 @@ export class Session {
         this.client = typeof d.client === "string" ? d.client.slice(0, 100) : null;
         Debug("gateway:session", `${this.id} identified from ${this.ws.data.ip} (user: ${this.user ? `${this.user.name} #${this.user.id}` : "none"}, client: ${this.client ?? "unknown"}, ${subs.length} subscription(s)${cursor ? `, replaying from ${cursor}` : ""})`);
 
+        const current = await getRecovery().catch(() => null);
+        if (this.is("closed")) return;
+        // so clients connecting mid recovery know recovered events are coming
+        const recovery = isActive(current) ? notice(current, false) : null;
         if (!cursor) {
             this.state = "live";
-            this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: false } });
+            this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: false, recovery } });
             return;
         }
 
         this.state = "replaying";
         const [oldest] = await redis.send("XRANGE", [streamKey, "-", "+", "COUNT", "1"]) as Array<StreamEntry>;
         const expired = oldest !== undefined && compareIds(cursor, oldest[0]) < 0;
-        this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: true, cursor_expired: expired } });
+        this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: true, cursor_expired: expired, recovery } });
         await this.replay(cursor);
     }
 
@@ -383,7 +394,7 @@ export class Session {
         }
     }
 
-    offer(event: StreamEvent): void {
+    offer(event: StreamItem): void {
         if (this.state === "live") {
             this.deliver(event);
         } else if (this.state === "replaying") {

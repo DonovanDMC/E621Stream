@@ -15,10 +15,17 @@ module E621Stream
     const(:data, T::Hash[String, T.untyped])
     # Only for private events, which are polled with your own credentials and never stored.
     const(:private, T::Boolean, default: false)
+    # Sent late by a recovery, so it's out of order with the rest. See https://e621.stream/replaying/#recoveries
+    const(:recovered, T::Boolean, default: false)
 
     sig { returns(T::Boolean) }
     def private?
       private
+    end
+
+    sig { returns(T::Boolean) }
+    def recovered?
+      recovered
     end
   end
 end

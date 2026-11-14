@@ -21,9 +21,23 @@ export interface Options {
     WebSocket?: typeof WebSocket;
 }
 
+/** We're going back over a window of time the server missed, see https://e621.stream/replaying/#recoveries */
+export interface Recovery {
+    done: boolean;
+    /** How many events it sent, once it's done. */
+    events?: number;
+    from: string;
+    id: string;
+    sources: Array<string>;
+    status?: "cancelled" | "done" | "failed";
+    to: string;
+}
+
 export interface Ready {
     /** If the cursor was older than anything still kept. */
     cursor_expired?: boolean;
+    /** The recovery that's running, if there is one. Older servers don't send this. */
+    recovery?: Recovery | null;
     replaying: boolean;
     session_id: string;
     subscriptions: Array<Subscription>;
@@ -44,6 +58,8 @@ export interface ClientEvents {
     error: [Error];
     ready: [Ready];
     reconnecting: [{ attempt: number; delayMS: number }];
+    /** A recovery started or finished, events from it have `recovered: true`. */
+    recovery: [Recovery];
     replayComplete: [{ cursor: string | null; events: number }];
     subscribed: [Array<Subscription>];
 }
@@ -106,7 +122,7 @@ export class E621Stream extends Emitter<Listeners> {
             this.emit("error", new Error("compression isn't supported"));
             return;
         }
-        const message = JSON.parse(raw) as { d?: unknown; data?: unknown; id?: string; op: string; private?: true; time?: string; type?: string };
+        const message = JSON.parse(raw) as { d?: unknown; data?: unknown; id?: string; op: string; private?: true; recovered?: true; time?: string; type?: string };
         switch (message.op) {
             case "hello": {
                 const { auth, client, subscriptions } = this.options;
@@ -128,11 +144,17 @@ export class E621Stream extends Emitter<Listeners> {
                 break;
             }
             case "dispatch": {
-                const event = { id: message.id, type: message.type, time: message.time, data: message.data, ...(message.private ? { private: true } : {}) } as StreamEvent;
+                const event = { id: message.id, type: message.type, time: message.time, data: message.data, ...(message.private ? { private: true } : {}), ...(message.recovered ? { recovered: true } : {}) } as StreamEvent;
                 if (!event.private) this.cursor = event.id;
                 this.emit("dispatch", event);
                 // typescript can't narrow this
                 this.emitUnchecked(event.type, event);
+                break;
+            }
+            case "recovery": {
+                // these are on the stream too, so they move the cursor
+                if (message.id) this.cursor = message.id;
+                this.emit("recovery", message.d as Recovery);
                 break;
             }
             case "replay_complete": {

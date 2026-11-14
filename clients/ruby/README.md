@@ -26,7 +26,9 @@ Instead of `username:` & `api_key:`, you can pass `token:` with a token from [/a
 
 `run` blocks, unless you're already in a reactor, then it runs as a task and `client.close` stops it.
 
-`on("post.create")` listens for one type, `on(:dispatch)` for everything. Events have `id`, `type`, `time` and `data` (the record as the api returns it), see [Events](https://e621.stream/events/). There's also `:ready`, `:replay_complete`, `:subscribed`, `:reconnecting`, `:close` and `:error`.
+`on("post.create")` listens for one type, `on(:dispatch)` for everything. Events have `id`, `type`, `time` and `data` (the record as the api returns it), see [Events](https://e621.stream/events/). There's also `:ready`, `:replay_complete`, `:subscribed`, `:recovery`, `:reconnecting`, `:close` and `:error`.
+
+If the server missed events and goes back for them (a [recovery](https://e621.stream/replaying/#recoveries)), `:recovery` gets the details when it starts and finishes, and the events it sends are `recovered?`. They can be hours old, so don't assume `time` only goes up.
 
 It reconnects when the connection drops (`reconnect: false` turns that off), and picks up from `client.cursor`. Pass `cursor:` to replay from an event id or ms timestamp. `url:` is the site (`https://e621.stream`), the websocket url comes from its `/info`, or pass a `ws://`/`wss://` url to connect to it directly. `client.subscribe([...])` changes subscriptions. Private events like `dmail.create` have to be subscribed to by name.
 

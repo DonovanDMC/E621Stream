@@ -59,6 +59,9 @@ const UPDATED_FIELD = "posts:updated_at";
 // order:updated isn't quite in order, the furthest out seen was about 19 seconds
 const OVERLAP_MS = 30_000;
 const MAX_ID_FIELD = "posts:max_id";
+// e621 won't go past this page of numbered results
+const MAX_PAGE = 750;
+const MAX_POST_ID = 2_147_483_647;
 
 async function search(tags: string, limit: number, page: number): Promise<Array<Post>> {
     return request("posts", () => e621.posts.search({ tags, limit, page })) as Promise<Array<unknown>> as Promise<Array<Post>>;
@@ -153,6 +156,57 @@ export class PostsFeed {
         return this.cursor;
     }
 
+    // compares posts against their snapshots, publishing whatever changed
+    private async process(found: Array<Post>, isNewPost: (post: Post, before: Snapshot | null) => boolean): Promise<number> {
+        if (found.length === 0) return 0;
+        const posts = found.toSorted((a, b) => Date.parse(a.updated_at) - Date.parse(b.updated_at));
+        const previous = await getSnapshots("post", posts.map(p => p.id)) as Map<number, unknown> as Map<number, Snapshot>;
+        const writes: Array<{ data: Snapshot; id: number; version: number }> = [];
+        let published = 0;
+        for (const post of posts) {
+            const snap = snapshot(post);
+            const before = previous.get(post.id) ?? null;
+            const isNew = isNewPost(post, before);
+            if (isNew) {
+                await publish("post.create", post.created_at, { post });
+                published++;
+            } else if (before?.change_seq !== post.change_seq) {
+                await publish("post.update", post.updated_at, { post, changes: before ? diff(before, snap) : null });
+                published++;
+            }
+            const stats = before && !isNew ? statsDiff(before, snap as PostStats) : null;
+            if (stats && Object.keys(stats).length !== 0) {
+                await publish("post.stats", post.updated_at, { post_id: post.id, score: snap.score, fav_count: snap.fav_count, comment_count: snap.comment_count, changes: stats });
+                published++;
+            }
+            if (!before || JSON.stringify(before) !== JSON.stringify(snap)) writes.push({ id: post.id, version: post.change_seq, data: snap });
+        }
+        await putSnapshots("post", writes);
+        return published;
+    }
+
+    // uploads from the window that have been touched since (a vote is enough) are past `to` by updated_at, the live
+    // feed already sent those as updates since they weren't new to it
+    private async recoverUploads(from: number, to: number, created: Set<number>, stop: () => Promise<void>): Promise<number> {
+        const uploads: Array<Post> = [];
+        for (let before = MAX_POST_ID; ;) {
+            await stop();
+            const posts = await search(`status:any order:id_desc id:<${before}`, LIMIT, 1);
+            for (const post of posts) {
+                const at = Date.parse(post.created_at);
+                if (at >= from && at <= to && !created.has(post.id)) uploads.push(post);
+            }
+            const oldest = posts.at(-1);
+            if (posts.length < LIMIT || !oldest || Date.parse(oldest.created_at) < from) break;
+            before = oldest.id;
+        }
+        uploads.reverse();
+        const previous = await getSnapshots("post", uploads.map(post => post.id));
+        for (const post of uploads) await publish("post.create", post.created_at, { post });
+        await putSnapshots("post", uploads.filter(post => !previous.has(post.id)).map(post => ({ id: post.id, version: post.change_seq, data: snapshot(post) })));
+        return uploads.length;
+    }
+
     async poll(): Promise<number> {
         const cursor = this.cursor ?? await this.init();
         // updated_at also changes for votes, favorites and comments
@@ -171,34 +225,47 @@ export class PostsFeed {
         if (!caughtUp) Debug("ingester:posts", `more than ${MAX_PAGES_PER_POLL * LIMIT} updates since ${new Date(since).toISOString()}, some were skipped`);
         if (found.size === 0) return 0;
 
-        const posts = [...found.values()].sort((a, b) => Date.parse(a.updated_at) - Date.parse(b.updated_at));
-        const previous = await getSnapshots("post", posts.map(p => p.id)) as Map<number, unknown> as Map<number, Snapshot>;
-        const writes: Array<{ data: Snapshot; id: number; version: number }> = [];
-        let published = 0;
-        for (const post of posts) {
-            const snap = snapshot(post);
-            const before = previous.get(post.id) ?? null;
-            // uploads can commit out of id order
+        const posts = [...found.values()];
+        // uploads can commit out of id order
+        const published = await this.process(posts, (post, before) => {
             const isNew = !before && (post.id > this.maxId || Date.now() - Date.parse(post.created_at) < NEW_POST_WINDOW_MS);
-            if (isNew) {
-                if (post.id > this.maxId) this.maxId = post.id;
-                await publish("post.create", post.created_at, { post });
-                published++;
-            } else if (before?.change_seq !== post.change_seq) {
-                await publish("post.update", post.updated_at, { post, changes: before ? diff(before, snap) : null });
-                published++;
-            }
-            const stats = before && !isNew ? statsDiff(before, snap as PostStats) : null;
-            if (stats && Object.keys(stats).length !== 0) {
-                await publish("post.stats", post.updated_at, { post_id: post.id, score: snap.score, fav_count: snap.fav_count, comment_count: snap.comment_count, changes: stats });
-                published++;
-            }
-            if (!before || JSON.stringify(before) !== JSON.stringify(snap)) writes.push({ id: post.id, version: post.change_seq, data: snap });
-        }
-        await putSnapshots("post", writes);
+            if (isNew && post.id > this.maxId) this.maxId = post.id;
+            return isNew;
+        });
 
         this.cursor = Math.max(cursor, ...posts.map(post => Date.parse(post.updated_at)));
         await redis.hset(cursorKey, { [UPDATED_FIELD]: String(this.cursor), [MAX_ID_FIELD]: String(this.maxId) });
+        return published;
+    }
+
+    // goes through every post updated between from and to. snapshots make anything already sent a no-op. there's only
+    // MAX_PAGE pages of any search, a range of ids that has more updates than that is split in half
+    // created is the posts that already have a post.create on the stream
+    async recover(from: number, to: number, created: Set<number>, stop: () => Promise<void>): Promise<number> {
+        const [newest] = await search("status:any", 1, 1);
+        if (!newest) return 0;
+        let published = await this.recoverUploads(from, to, created, stop);
+        const range = async (lo: number, hi: number): Promise<void> => {
+            for (let page = 1; page <= MAX_PAGE; page++) {
+                await stop();
+                const posts = await search(`order:updated status:any id:${lo}..${hi}`, LIMIT, page);
+                published += await this.process(posts.filter((post) => {
+                    const at = Date.parse(post.updated_at);
+                    return at > from && at <= to;
+                }), (post, before) => !before && Date.parse(post.created_at) >= from);
+                const oldest = posts.at(-1);
+                if (posts.length < LIMIT || !oldest || Date.parse(oldest.updated_at) <= from) return;
+            }
+            if (lo === hi) {
+                Debug("ingester:posts", `post ${lo} has more than ${MAX_PAGE} pages of updates, somehow`);
+                return;
+            }
+            const mid = Math.floor((lo + hi) / 2);
+            Debug("ingester:posts", `recovery: too many updates in ${lo}..${hi}, splitting`);
+            await range(lo, mid);
+            await range(mid + 1, hi);
+        };
+        await range(1, newest.id);
         return published;
     }
 }

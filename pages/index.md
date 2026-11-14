@@ -59,15 +59,18 @@ Or, log in at [/authorize](/authorize) with your e621 account and make a token t
 | `heartbeat` | none | optional, answered with `heartbeat_ack` |
 
 ### Server -> Client
+New ops and fields can be added without a version bump, ignore ones you don't know.
+
 
 | op | payload |
 |---|---|
 | `hello` | `{ version, session_id, identify_timeout_ms, auth_required, compression, events }` |
-| `ready` | `{ session_id, user, subscriptions, replaying, cursor_expired? }` |
-| `dispatch` | `id`, `type`, `time` (when it happened on e621) and `data`, not in `d` |
+| `ready` | `{ session_id, user, subscriptions, replaying, cursor_expired?, recovery }` |
+| `dispatch` | `id`, `type`, `time` (when it happened on e621), `recovered` (only when `true`) and `data`, not in `d` |
 | `replay_complete` | `{ events, cursor }` |
 | `subscribed` | `{ subscriptions }` |
 | `snapshot` | `{ resource, nonce, snapshots, done }` |
+| `recovery` | `id` and `d`, see [Recoveries](/replaying/#recoveries) |
 | `heartbeat_ack` | `{ cursor }`, the last event you were sent |
 | `error` | `{ code, message }`, right before you're disconnected with that code |
 

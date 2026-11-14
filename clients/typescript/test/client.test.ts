@@ -97,6 +97,22 @@ describe("E621Stream", () => {
         expect(client.cursor).toBe("1-0");
     });
 
+    test("recoveries are passed on and their events are flagged", async () => {
+        const client = stream().connect();
+        const recoveries: Array<boolean> = [], recovered: Array<boolean> = [];
+        client.on("recovery", recovery => recoveries.push(recovery.done)).on("dispatch", event => recovered.push(event.recovered === true));
+        await tick();
+        const d = { id: "r1", from: "2026-11-14T02:00:00Z", to: "2026-11-14T08:00:00Z", sources: ["posts"] };
+        FakeSocket.sockets[0]!.receive({ op: "recovery", id: "1-0", d: { ...d, done: false } });
+        FakeSocket.sockets[0]!.receive(dispatch("2-0", "post.create", { recovered: true }));
+        FakeSocket.sockets[0]!.receive(dispatch("3-0"));
+        FakeSocket.sockets[0]!.receive({ op: "recovery", id: "4-0", d: { ...d, done: true, status: "done", events: 1 } });
+        expect(recoveries).toEqual([false, true]);
+        expect(recovered).toEqual([true, false]);
+        expect(client.cursor).toBe("4-0");
+        client.close();
+    });
+
     test("reconnects and resumes from the last event", async () => {
         const client = stream().connect();
         const reconnecting: Array<number> = [];

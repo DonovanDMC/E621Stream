@@ -146,6 +146,20 @@ class ClientTest < Minitest::Test
     assert_equal(1, connector.connections.size)
   end
 
+  def test_recoveries_are_passed_on
+    window = { id: "r1", from: "2026-11-14T02:00:00Z", to: "2026-11-14T08:00:00Z", sources: ["posts"] }
+    script = [HELLO, { op: "ready", d: {} }, { op: "recovery", id: "1-0", d: window.merge(done: false) },
+              { op: "dispatch", id: "2-0", type: "post.create", time: "", data: {}, recovered: true },
+              { op: "recovery", id: "3-0", d: window.merge(done: true, status: "done", events: 1) }, *fatal,]
+    stream = client(FakeConnector.new(script))
+    recoveries = []
+    recovered = []
+    stream.on(:recovery) { |recovery| recoveries << recovery["done"] }.on(:dispatch) { |event| recovered << event.recovered? }
+    stream.run
+    assert_equal([false, true], recoveries)
+    assert_equal([true], recovered)
+  end
+
   def test_snapshots_get_their_reply
     first = { op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { "1" => { "id" => 1, "rating" => "s" } }, done: false } }
     rest = { op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { "2" => nil }, done: true } }

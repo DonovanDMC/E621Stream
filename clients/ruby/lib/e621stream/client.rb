@@ -92,7 +92,7 @@ module E621Stream
     end
 
     # Listens for an event type (like "post.create"), or one of :dispatch (every event), :ready, :replay_complete,
-    # :subscribed, :error, :close and :reconnecting.
+    # :subscribed, :recovery, :error, :close and :reconnecting.
     sig { params(name: T.any(String, Symbol), block: Listener).returns(T.self_type) }
     def on(name, &block)
       T.must(@listeners[name.to_s]) << block
@@ -213,10 +213,15 @@ module E621Stream
         @ready = true
         emit("ready", data)
       when "dispatch"
-        event = Event.new(id: message["id"], type: message["type"], time: message["time"], data: message["data"], private: message["private"] == true)
+        event = Event.new(id: message["id"], type: message["type"], time: message["time"], data: message["data"],
+                          private: message["private"] == true, recovered: message["recovered"] == true)
         @cursor = event.id unless event.private?
         emit("dispatch", event)
         emit(event.type, event)
+      when "recovery"
+        # these are on the stream too, so they move the cursor
+        @cursor = message["id"] if message["id"]
+        emit("recovery", data)
       when "replay_complete"
         emit("replay_complete", data)
       when "subscribed"

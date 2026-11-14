@@ -2,6 +2,7 @@ import Debug from "@yiffy/debug";
 import E621, { RatelimitError, UnexpectedResponseError, type Options } from "e621";
 
 import { e621AuthKey, e621AuthUser, e621AuthRequestIntervalMS, e621BaseURL, e621PrivateRequestIntervalMS, e621RequestIntervalMS, e621UserAgent, redisPrefix } from "./config.ts";
+import { recoveryContext } from "./recovery.ts";
 import redis from "./redis.ts";
 
 export class AuthError extends Error {
@@ -13,15 +14,21 @@ export class AuthError extends Error {
 
 export const hasAuth = Boolean(e621AuthUser && e621AuthKey);
 
-export function createClient(auth: Pick<Options, "authKey" | "authToken" | "authUser"> = {}): E621 {
+// the module now assumes v2 is the default, but e621 still returns v1 unless asked
+const postFormat = { v1: true } as const;
+
+export function createClient(auth: Pick<Options, "authKey" | "authToken" | "authUser"> = {}): E621<typeof postFormat> {
     return new E621({
         ...auth,
         baseURL: e621BaseURL,
         userAgent: e621UserAgent,
         requestTimeout: 30,
         ratelimit: { retry: false },
+        defaultPostFormat: postFormat,
     });
 }
+
+export type Client = ReturnType<typeof createClient>;
 
 export const e621 = createClient({ authUser: e621AuthUser, authKey: e621AuthKey });
 
@@ -125,7 +132,8 @@ async function backoff(attempt: number, reason: string): Promise<void> {
     await Bun.sleep(ms);
 }
 
-export async function request<T>(what: string, fn: () => Promise<T>, queue: Scheduler = ingestQueue, retries = 5): Promise<T> {
+// recoveries go behind the live feeds
+export async function request<T>(what: string, fn: () => Promise<T>, queue: Scheduler = recoveryContext.getStore() ? backfillQueue : ingestQueue, retries = 5): Promise<T> {
     for (let attempt = 1; ; attempt++) {
         try {
             return scrub(await queue.schedule(fn));

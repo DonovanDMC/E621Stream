@@ -61,7 +61,7 @@ function poolMembers(item: Item): Array<{ data: unknown; type: EventType }> {
 
 export const FEEDS: Array<FeedSource> = [
     { name: "post_versions", event: "post_version.create", intervalMS: 8000, search: page => e621.postVersions.search(page) },
-    { name: "post_events", event: "post_event.create", intervalMS: 8000, search: page => e621.postEvents.search(page), after: afterPostEvent },
+    { name: "post_events", event: "post_event.create", intervalMS: 8000, search: page => e621.postEvents.search({ ...page, v1: true }), after: afterPostEvent },
     { name: "comments", event: "comment.create", intervalMS: 8000, search: page => e621.comments.search({ ...page, group_by: "comment" }), tracked: TRACKED.comment },
     { name: "forum_posts", event: "forum_post.create", intervalMS: 15_000, search: page => e621.forumPosts.search(page), tracked: TRACKED.forumPost },
     { name: "forum_topics", event: "forum_topic.create", intervalMS: 20_000, search: page => e621.forumTopics.search(page), tracked: TRACKED.forumTopic },
@@ -96,6 +96,10 @@ export const FEEDS: Array<FeedSource> = [
 ];
 
 const LIMIT = 320;
+const timeOf = (item: Item): number | null => {
+    const time = Date.parse(item.created_at ?? item.updated_at ?? "");
+    return Number.isNaN(time) ? null : time;
+};
 const MAX_PAGES_PER_POLL = 10;
 // ids are assigned when a transaction starts, not when it commits, so rows can show up behind the cursor
 const OVERLAP = 25;
@@ -112,6 +116,24 @@ export class Feed {
         return await request(this.source.name, () => this.source.search({ limit, page })) ?? [];
     }
 
+    // the newest item from before `time`, by binary searching ids. assumes ids roughly follow creation time
+    private async idBefore(time: number, top: number): Promise<number> {
+        let lo = 0, hi = top;
+        while (hi - lo > LIMIT) {
+            const mid = Math.floor((lo + hi) / 2);
+            const [item] = await this.fetch(1, `b${mid + 1}`);
+            if (!item) {
+                lo = mid;
+                continue;
+            }
+            const at = timeOf(item);
+            if (at === null) throw new Error("items have no timestamps");
+            if (at < time) lo = item.id;
+            else hi = mid;
+        }
+        return lo;
+    }
+
     private async init(): Promise<number> {
         const stored = await redis.hget(cursorKey, this.source.name);
         if (stored) {
@@ -124,6 +146,21 @@ export class Feed {
         await redis.hset(cursorKey, this.source.name, String(this.cursor));
         Debug(`ingester:${this.source.name}`, `starting at id ${this.cursor}`);
         return this.cursor;
+    }
+
+    private async publishItem(item: Item): Promise<number> {
+        if (this.source.private?.(item)) return 0;
+        const time = item.created_at ?? item.updated_at ?? new Date().toISOString();
+        const derived = await this.source.derive?.(item);
+        await publish(this.source.event, time, item);
+        if (derived) await publish(derived, time, item);
+        for (const extra of this.source.expand?.(item) ?? []) await publish(extra.type, time, extra.data);
+        if (this.source.tracked) await remember(this.source.tracked, [item]);
+        if (!this.source.after) return 1;
+        return 1 + await this.source.after(item).catch((err: unknown) => {
+            Debug(`ingester:${this.source.name}`, `follow-up for ${item.id} failed: ${String(err)}`);
+            return 0;
+        });
     }
 
     private trimSeen(): void {
@@ -143,22 +180,8 @@ export class Feed {
             items.sort((a, b) => a.id - b.id);
             for (const item of items) {
                 if (item.id <= this.floor || this.seen.has(item.id)) continue;
-                if (this.source.private?.(item)) {
-                    this.seen.add(item.id);
-                    continue;
-                }
-                const time = item.created_at ?? item.updated_at ?? new Date().toISOString();
-                const derived = await this.source.derive?.(item);
-                await publish(this.source.event, time, item);
-                if (derived) await publish(derived, time, item);
-                for (const extra of this.source.expand?.(item) ?? []) await publish(extra.type, time, extra.data);
-                if (this.source.tracked) await remember(this.source.tracked, [item]);
+                published += await this.publishItem(item);
                 this.seen.add(item.id);
-                published++;
-                if (this.source.after) published += await this.source.after(item).catch((err: unknown) => {
-                    Debug(`ingester:${this.source.name}`, `follow-up for ${item.id} failed: ${String(err)}`);
-                    return 0;
-                });
             }
             const max = items.at(-1)?.id ?? cursor;
             if (max > cursor) {
@@ -170,5 +193,28 @@ export class Feed {
         this.cursor = cursor;
         this.trimSeen();
         return published;
+    }
+
+    // republishes what was created between from and to, up to the feed's cursor (it handles everything after).
+    // sent is what's already on the stream, by id, so it isn't sent twice
+    async recover(from: number, to: number, sent: Set<number>, stop: () => Promise<void>): Promise<number> {
+        const stored = await redis.hget(cursorKey, this.source.name);
+        if (!stored) return 0;
+        const top = Number(stored);
+        let after = await this.idBefore(from, top);
+        let published = 0;
+        for (;;) {
+            await stop();
+            const items = await this.fetch(LIMIT, `a${after}`);
+            items.sort((a, b) => a.id - b.id);
+            for (const item of items) {
+                if (item.id > top) return published;
+                const at = timeOf(item);
+                if (at === null || at < from || at > to || sent.has(item.id)) continue;
+                published += await this.publishItem(item);
+            }
+            if (items.length < LIMIT) return published;
+            after = items.at(-1)!.id;
+        }
     }
 }

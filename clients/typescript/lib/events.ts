@@ -157,6 +157,8 @@ export type StreamEvent<T extends EventType | PrivateEventType = EventType | Pri
     /** Pass this as `cursor` to resume after this event. Private events don't have one. */
     id: string;
     private?: true;
+    /** Sent late by a recovery, so it's out of order with the rest. See https://e621.stream/replaying/#recoveries */
+    recovered?: true;
     /** When it happened on e621. */
     time: string;
     type: T;

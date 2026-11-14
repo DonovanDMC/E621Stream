@@ -1,5 +1,6 @@
 import { maxStreamLength, streamKey } from "./config.ts";
 import { count } from "./metrics.ts";
+import { recoveryContext, type RecoveryNotice } from "./recovery.ts";
 import redis, { fieldsToObject, type StreamEntry } from "./redis.ts";
 
 export const EVENT_TYPES = [
@@ -165,22 +166,46 @@ export interface StreamEvent {
     data: Record<string, unknown>;
     id: string;
     raw: string;
+    recovered: boolean;
     time: string;
     type: EventType;
 }
 
+// recovery start/end markers, they go on the stream so they're in order with the events and get replayed
+export interface StreamNotice {
+    id: string;
+    notice: "recovery";
+    raw: string;
+}
+
+export type StreamItem = StreamEvent | StreamNotice;
+
+export const isNotice = (item: StreamItem): item is StreamNotice => "notice" in item;
+
 export async function publish(type: EventType, time: string, data: unknown): Promise<string> {
     count("events");
     count(`events.${type}`);
-    return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", type, "ts", time, "d", JSON.stringify(data)]) as Promise<string>;
+    const recovery = recoveryContext.getStore();
+    if (recovery) count("events.recovered");
+    return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", type, "ts", time, "d", JSON.stringify(data), ...recovery ? ["r", recovery] : []]) as Promise<string>;
 }
 
-export function parseEntry([id, fields]: StreamEntry): StreamEvent | null {
-    const { t, ts, d } = fieldsToObject(fields);
-    if (!t || !isEventType(t) || d === undefined) return null;
-    return { id, type: t, time: ts ?? "", data: JSON.parse(d) as Record<string, unknown>, raw: d };
+export async function publishNotice(notice: RecoveryNotice): Promise<string> {
+    return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", "recovery", "d", JSON.stringify(notice)]) as Promise<string>;
+}
+
+export function parseEntry([id, fields]: StreamEntry): StreamItem | null {
+    const { t, ts, d, r } = fieldsToObject(fields);
+    if (d === undefined) return null;
+    if (t === "recovery") return { id, notice: "recovery", raw: d };
+    if (!t || !isEventType(t)) return null;
+    return { id, type: t, time: ts ?? "", data: JSON.parse(d) as Record<string, unknown>, raw: d, recovered: r !== undefined };
 }
 
 export function dispatchFrame(event: StreamEvent): string {
-    return `{"op":"dispatch","id":${JSON.stringify(event.id)},"type":"${event.type}","time":${JSON.stringify(event.time)},"data":${event.raw}}`;
+    return `{"op":"dispatch","id":${JSON.stringify(event.id)},"type":"${event.type}","time":${JSON.stringify(event.time)},${event.recovered ? "\"recovered\":true," : ""}"data":${event.raw}}`;
+}
+
+export function noticeFrame(notice: StreamNotice): string {
+    return `{"op":"recovery","id":${JSON.stringify(notice.id)},"d":${notice.raw}}`;
 }

@@ -30,6 +30,7 @@ export const bansKey = `${redisPrefix}:bans`;
 export const adminChannel = `${redisPrefix}:admin`;
 export const idleKey = `${redisPrefix}:ingester:idle`;
 export const dataKey = `${redisPrefix}:data`;
+export const recoveryKey = `${redisPrefix}:recovery`;
 export const databaseURL = Bun.env.DATABASE_URL ?? "postgres://e621stream:e621stream@postgres:5432/e621stream";
 
 // e621

@@ -47,6 +47,8 @@ export const TRACKED = {
 } satisfies Record<string, Tracked>;
 
 const LIMIT = 320;
+// e621 won't go past this page of numbered results
+const MAX_PAGE = 750;
 const OVERLAP_MS = 5000;
 const CREATION_SLACK_MS = 2000;
 const FIRST_RUN_MS = 10 * 60_000;
@@ -248,5 +250,29 @@ export class UpdateFeed {
 
     poll(): Promise<number> {
         return this.source.mode === "ordered" ? this.pollOrdered() : this.pollWindow();
+    }
+
+    // everything updated between from and to, compared against snapshots so what was already sent is skipped. only
+    // works for ordered sources, the rest can only see their newest page
+    async recover(from: number, to: number, stop: () => Promise<void>): Promise<number> {
+        if (this.source.mode !== "ordered") throw new Error(`${this.source.name} can't be recovered`);
+        const found: Array<Item> = [];
+        for (let page = 1; page <= MAX_PAGE; page++) {
+            await stop();
+            const { full, items } = await this.fetch(page, new Date(from));
+            let done = !full;
+            for (const item of items) {
+                const at = Date.parse(item.updated_at ?? "");
+                if (at <= from) {
+                    done = true;
+                    break;
+                }
+                if (at <= to) found.push(item);
+            }
+            if (done) break;
+            if (page === MAX_PAGE) Debug(`ingester:${this.source.name}`, `recovery: more than ${MAX_PAGE} pages of updates, the oldest were skipped`);
+        }
+        found.reverse();
+        return this.handle(found, this.source.unknownChanges);
     }
 }

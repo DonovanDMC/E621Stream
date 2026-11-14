@@ -1,7 +1,9 @@
 import Debug from "@yiffy/debug";
 
-import { adminUserIDs, clientListKey, oauthEnabled, redisPrefix } from "../config.ts";
+import { adminUserIDs, clientListKey, oauthEnabled, redisPrefix, retentionHours } from "../config.ts";
+import { RECOVERABLE } from "../ingester/recovery.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
+import { cancelRecovery, getRecovery, isActive, requestRecovery, type Recovery } from "../recovery.ts";
 import redis from "../redis.ts";
 
 import { createSession, sessionCookie, sessionKey, sessionToken, type Admin } from "./adminSession.ts";
@@ -70,6 +72,7 @@ details.filter summary::after { content: "›"; display: inline-block; margin-le
 details.filter[open] summary::after { transform: rotate(90deg); }
 details.filter > code { display: block; padding-left: 16px; overflow-wrap: anywhere; }
 .subs input:checked ~ label::after { content: "▾ show less"; }
+.sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 12px; margin: 8px 0; }
 </style>
 </head>
 <body>
@@ -113,8 +116,41 @@ function subscriptions(id: string, list: ListedClient["subscriptions"]): string 
     return `<div class="subs"><input type="checkbox" id="subs-${esc(id)}">${items.slice(0, 3).join("<br>")}<div class="more">${items.slice(3).join("<br>")}</div><label for="subs-${esc(id)}" data-more="${items.length - 3} more"></label></div>`;
 }
 
+// an iso time, or how long ago (90m, 6h, 2d)
+function parseTime(value: string | null, fallback: Date): Date {
+    const text = value?.trim() ?? "";
+    if (text === "") return fallback;
+    const relative = /^(\d+)([mhd])$/.exec(text);
+    if (relative) return new Date(Date.now() - Number(relative[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[relative[2] as "m" | "h" | "d"]);
+    return new Date(text);
+}
+
+function recoverySection(recovery: Recovery | null): string {
+    const current = recovery ? `<p>${esc(recovery.id)}: <span class="${recovery.status === "done" ? "ok" : recovery.status === "failed" ? "bad" : isActive(recovery) ? "run" : "dim"}">${recovery.status}</span>, ${esc(recovery.from)} to ${esc(recovery.to)}, ${recovery.events} event(s). Requested by ${esc(recovery.requested_by)} <span title="${esc(recovery.requested_at)}">${ago(recovery.requested_at)}</span>.${recovery.error ? ` <span class="bad">${esc(recovery.error)}</span>` : ""}</p>
+${isActive(recovery) ? button("recovery/cancel", {}, "Cancel", "Cancel the recovery? What's been sent so far stays sent.") : ""}
+<details><summary>${recovery.sources.length} source(s)</summary><div class="table-wrap"><table>
+<tr><th>source</th><th>status</th><th>events</th><th></th></tr>
+${recovery.sources.map((name) => {
+    const p = recovery.progress[name];
+    return `<tr><td><code>${esc(name)}</code></td><td>${esc(p?.status)}</td><td>${p?.events ?? 0}</td><td>${p?.error ? `<span class="bad">${esc(p.error)}</span>` : ""}</td></tr>`;
+}).join("")}
+</table></div></details>` : "<p>No recoveries yet.</p>";
+    if (isActive(recovery)) return current;
+    return `${current}
+<form method="post" action="/admin/recovery" data-confirm="Start a recovery? Every client is told about it, and what's found is sent to them." onsubmit="return confirm(this.dataset.confirm)">
+<div class="stack" style="display: grid; gap: 10px; max-width: 320px;">
+<input name="from" placeholder="from: iso time, or 6h / 90m / 2d ago" required>
+<input name="to" placeholder="to (default now)">
+</div>
+<details><summary>sources (all by default)</summary><div class="sources">
+${RECOVERABLE.map(name => `<label><input type="checkbox" name="source" value="${esc(name)}" checked> <code>${esc(name)}</code></label>`).join("")}
+</div></details>
+<button type="submit" class="bad">Recover</button>
+</form>`;
+}
+
 async function adminPage(admin: Admin, notice?: string): Promise<Response> {
-    const [lists, bans] = await Promise.all([redis.send("HVALS", [clientListKey]) as Promise<Array<string>>, listBans()]);
+    const [lists, bans, recovery] = await Promise.all([redis.send("HVALS", [clientListKey]) as Promise<Array<string>>, listBans(), getRecovery()]);
     const clients = lists.flatMap(list => JSON.parse(list) as Array<ListedClient>).sort((a, b) => a.connected_at.localeCompare(b.connected_at));
     const clientRows = clients.map(c => `<tr><td>${c.client ? esc(c.client) : "<span class=\"dim\">unnamed</span>"}</td>
 <td>${c.user ? `<a href="https://e621.net/users/${c.user_id}">${esc(c.user)}</a>` : "<span class=\"dim\">anonymous</span>"}</td>
@@ -141,7 +177,11 @@ ${clientRows}
 ${banRows ? `<div class="table-wrap"><table>
 <tr><th>user</th><th>reason</th><th>by</th><th>banned</th><th></th></tr>
 ${banRows}
-</table></div>` : "<p>Nobody's banned.</p>"}`);
+</table></div>` : "<p>Nobody's banned.</p>"}
+
+<h2>Recovery</h2>
+<p class="dim">Re-fetches a window of time the ingester missed, and sends what wasn't sent the first time as <code>recovered</code> events. Pick only the sources that actually missed things, the id based ones can only tell what was sent from the last ${retentionHours}h of the stream.</p>
+${recoverySection(recovery)}`);
 }
 
 async function login(req: Request, ip: string): Promise<Response> {
@@ -199,6 +239,17 @@ async function action(req: Request, admin: Admin, name: string): Promise<Respons
             if (adminUserIDs.has(userId)) return adminPage(admin, "admins can't be banned");
             await ban({ user_id: userId, name: optional(body.get("name")), reason: optional(body.get("reason")?.slice(0, 500)), banned_by: admin.name, banned_at: new Date().toISOString() });
             Debug("gateway:admin", `${admin.name} banned #${userId}`);
+            return redirect();
+        }
+        case "recovery": {
+            const picked = body.getAll("source").filter(name => RECOVERABLE.includes(name));
+            const result = await requestRecovery(parseTime(body.get("from"), new Date(Number.NaN)), parseTime(body.get("to"), new Date()), picked, admin.name);
+            if (typeof result === "string") return adminPage(admin, result);
+            Debug("gateway:admin", `${admin.name} started recovery ${result.id} (${result.from} to ${result.to}, ${picked.length} source(s))`);
+            return redirect();
+        }
+        case "recovery/cancel": {
+            if (await cancelRecovery()) Debug("gateway:admin", `${admin.name} cancelled the recovery`);
             return redirect();
         }
         case "unban": {

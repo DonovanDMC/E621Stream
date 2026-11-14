@@ -1,7 +1,7 @@
 import Debug from "@yiffy/debug";
 
 import { privatePollIntervalMS, redisPrefix } from "../config.ts";
-import { AuthError, createClient, privateQueue, request } from "../e621.ts";
+import { AuthError, type Client, createClient, privateQueue, request } from "../e621.ts";
 import { PRIVATE_EVENT_TYPES, type PrivateEventType } from "../events.ts";
 import { count } from "../metrics.ts";
 import redis, { createRedis } from "../redis.ts";
@@ -9,13 +9,11 @@ import redis, { createRedis } from "../redis.ts";
 import { describeCredentials, type Credentials } from "./auth.ts";
 import { accessToken } from "./oauth.ts";
 
-import type E621 from "e621";
-
 export interface PrivateEvent { data: unknown; id: string; time: string; type: PrivateEventType }
 
 interface Source {
     types: Array<PrivateEventType>;
-    poll(search: <T>(fn: (client: E621) => Promise<T>) => Promise<T>, userId: number): Promise<Array<PrivateEvent>>;
+    poll(search: <T>(fn: (client: Client) => Promise<T>) => Promise<T>, userId: number): Promise<Array<PrivateEvent>>;
 }
 
 export interface PrivateMember {
@@ -118,8 +116,8 @@ async function own(source: string, userId: number): Promise<boolean> {
 }
 
 async function poll(name: string, userId: number, credentials: Credentials): Promise<void> {
-    const search = async <T>(fn: (client: E621) => Promise<T>): Promise<T> => {
-        let client: E621;
+    const search = async <T>(fn: (client: Client) => Promise<T>): Promise<T> => {
+        let client: Client;
         if ("token" in credentials) {
             // gotten for every request, it only lasts 15 minutes
             const token = await accessToken(userId);

@@ -5,7 +5,7 @@ import { compile, FilterError, matches } from "../src/gateway/filter.ts";
 import type { StreamEvent } from "../src/events.ts";
 
 function event(type: StreamEvent["type"], data: Record<string, unknown>): StreamEvent {
-    return { id: "1-0", type, time: "", data, raw: JSON.stringify(data) };
+    return { id: "1-0", type, time: "", data, raw: JSON.stringify(data), recovered: false };
 }
 
 const post = {
