@@ -2,6 +2,7 @@ import { listStates, type BackfillState } from "../backfill/state.ts";
 import { clientsKey, cursorKey, dataKey, feedsKey, gitCommit, idleKey, idlePollScale, redisPrefix, repositoryURL, streamKey } from "../config.ts";
 import { recent, totals, trackingSince, type Counts } from "../metrics.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
+import { getRecovery, isActive, type Recovery } from "../recovery.ts";
 import redis from "../redis.ts";
 
 import { hubStats } from "./hub.ts";
@@ -81,7 +82,7 @@ function backfillProgress(state: BackfillState): Backfill {
 }
 
 async function build(): Promise<Record<string, unknown>> {
-    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors, ingesterCommit, since] = await Promise.all([
+    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors, ingesterCommit, since, recovery] = await Promise.all([
         recent("minute", 60),
         recent("hour", 24),
         totals(),
@@ -96,6 +97,7 @@ async function build(): Promise<Record<string, unknown>> {
         redis.send("HGETALL", [cursorKey]) as Promise<Record<string, string> | null>,
         redis.get(`${redisPrefix}:ingester:commit`),
         trackingSince(),
+        getRecovery(),
     ]);
     const feeds = Object.entries(feedHealth ?? {}).map(([name, health]) => ({ name, ...JSON.parse(health) as FeedHealth })).sort((a, b) => a.name.localeCompare(b.name));
     const hour = add(minutes.map(m => m.counts)), day = add(hours.map(h => h.counts));
@@ -144,6 +146,8 @@ async function build(): Promise<Record<string, unknown>> {
         gateway: { connections: sessions.size, events_received: hubStats.received },
         feeds,
         backfill,
+        // the latest one, who asked for it is only on the admin page
+        recovery: recovery ? { ...recovery, requested_by: undefined, active: isActive(recovery) } : null,
         data: { counted_at: counts?.computed_at ?? null, models: models(counts, cursors ?? {}, feeds) },
     };
 }
@@ -228,6 +232,7 @@ export async function statusPage(): Promise<string> {
         gateway_commit: string;
         generated_at: string;
         ingester: { clients: number; commit: string | null; idle: boolean; idle_poll_scale: number; started_at: string | null };
+        recovery: (Recovery & { active: boolean }) | null;
         requests: { avg_ms: Record<string, number | null>; by_role: Record<string, { last_24h: Record<string, number | null>; last_hour: Record<string, number | null> }>; by_route: Record<string, { last_24h: { avg_ms: number | null; requests: number }; last_hour: { avg_ms: number | null; requests: number } }>; failed: Counts; last_24h: number; last_hour: number; per_minute: Array<{ avg_ms: number | null; failed: number; requests: number }>; per_second_last_hour: number; ratelimited: Counts; total: number };
         tracking_since: string | null;
     };
@@ -256,6 +261,17 @@ export async function statusPage(): Promise<string> {
     const routeRows = Object.entries(requests.by_route).map(([route, r]) => `<tr><td>${esc(route)}</td>
         <td class="n">${num(r.last_hour.requests)}</td><td class="n">${ms(r.last_hour.avg_ms)}</td><td class="n">${num(r.last_24h.requests)}</td><td class="n">${ms(r.last_24h.avg_ms)}</td></tr>`).join("");
     const since = data.tracking_since ? `since ${esc(data.tracking_since.slice(0, 10))}` : "";
+    const { recovery } = data;
+    const window = recovery ? `${esc(new Date(recovery.from).toUTCString())} to ${esc(new Date(recovery.to).toUTCString())}` : "";
+    const sourcesDone = recovery ? recovery.sources.filter(name => recovery.progress[name]?.status === "done" || recovery.progress[name]?.status === "failed").length : 0;
+    const recoveryNotice = recovery?.active
+        ? `<p class="notice">We're going back over ${window} for events we missed, they're sent with <code>"recovered": true</code>. ${num(sourcesDone)} of ${num(recovery.sources.length)} source(s) done so far. See <a href="/replaying/#recoveries">Recoveries</a>.</p>`
+        : "";
+    const RECOVERY_CLASS: Record<string, string> = { ...STATUS_CLASS, cancelled: "dim" };
+    const recoveryRows = recovery ? recovery.sources.map((name) => {
+        const p = recovery.progress[name];
+        return `<tr><td>${esc(name)}</td><td class="${RECOVERY_CLASS[p?.status ?? "pending"] ?? ""}">${esc(p?.status ?? "pending")}</td><td class="n">${num(p?.events ?? 0)}</td><td class="detail">${esc(p?.error ?? "")}</td></tr>`;
+    }).join("") : "";
     const typeRows = events.by_type.map(t => `<tr><td>${esc(t.type)}</td><td class="n">${num(t.last_hour)}</td><td class="n">${num(t.last_24h)}</td><td class="n">${num(t.total)}</td></tr>`).join("");
 
     return `<!DOCTYPE html>
@@ -269,11 +285,13 @@ export async function statusPage(): Promise<string> {
 <style>
 ${PAGE_CSS}
 ${NAV_CSS}
+.notice { background: var(--surface); border-left: 4px solid var(--run); border-radius: 4px; padding: 10px 14px; }
 </style>
 </head>
 <body>
 ${navHTML(NAV, "/status")}
 <main>
+${recoveryNotice}
 <h1>E621Stream status</h1>
 <p>${data.ingester.idle ? `Nobody's connected, so feeds are polled ${data.ingester.idle_poll_scale}x slower and the backfill gets the spare requests.` : data.ingester.clients === 0 ? "Nobody's connected, but there's nothing left to backfill, so feeds are polled at full speed." : `${num(data.ingester.clients)} client(s) connected, feeds are polled at full speed.`}</p>
 
@@ -314,6 +332,14 @@ ${backfillDone ? "" : `<h2>Backfill</h2>
 <tr><th>source</th><th>from</th><th>status</th><th>progress</th><th>stored</th><th>left</th><th></th></tr>
 ${backfillRows}
 </table></div>`}
+
+${recovery ? `<h2>Recovery</h2>
+<p>${recovery.active ? "Running" : "The last one"}: ${window}, <span class="${RECOVERY_CLASS[recovery.status] ?? ""}">${esc(recovery.status)}</span>, ${num(recovery.events)} event(s) sent${recovery.started_at ? `, started ${ago(recovery.started_at)}` : ""}${recovery.finished_at ? `, finished ${ago(recovery.finished_at)}` : ""}.${recovery.error ? ` <span class="bad">${esc(recovery.error)}</span>` : ""}</p>
+<p class="dim">Going back over a window of time we missed events in, and sending what wasn't sent the first time. See <a href="/replaying/#recoveries">Recoveries</a>.</p>
+<div class="table-wrap"><table>
+<tr><th>source</th><th>status</th><th>events</th><th></th></tr>
+${recoveryRows}
+</table></div>` : ""}
 
 <h2>Data</h2>
 <p class="dim">Every record update events are compared against. Deleted and hidden records have ids that are never seen, so the highest id is more than what can be stored. Changes show up within the slowest of each model's feeds, which is ${num(data.ingester.idle_poll_scale)}x slower while nobody's connected and the backfill is running. Counted ${ago(data.data.counted_at)}.</p>
