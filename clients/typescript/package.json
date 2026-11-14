@@ -1,6 +1,6 @@
 {
   "name": "e621stream",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "A client for E621Stream, a live WebSocket stream of e621 activity",
   "license": "MIT",
   "author": "Donovan_DMC <hewwo@yiff.rocks>",
