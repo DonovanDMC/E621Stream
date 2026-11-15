@@ -64,6 +64,9 @@ const OVERLAP_MS = 30_000;
 const MAX_ID_FIELD = "posts:max_id";
 // e621 won't go past this page of numbered results
 const MAX_PAGE = 750;
+// a range is checked at this page before going through it, the gap to MAX_PAGE is room for posts shifting down while
+// paging (every update during the crawl pushes the rest back one)
+const PROBE_PAGE = 600;
 const MAX_POST_ID = 2_147_483_647;
 
 async function search(tags: string, limit: number, page: number): Promise<Array<Post>> {
@@ -296,6 +299,20 @@ export class PostsFeed {
         // the first range is the one being gone through, splitting it puts both halves first so the order is the same
         while (state.ranges.length !== 0) {
             const [lo, hi] = state.ranges[0]!;
+            // a range with more than PROBE_PAGE pages of updates is split before going through it, instead of after
+            // 750 pages that the halves go back over anyway
+            if (state.page === 1 && lo !== hi) {
+                await stop();
+                const probe = await search(`order:updated status:any id:${lo}..${hi}`, LIMIT, PROBE_PAGE);
+                const oldest = probe.at(-1);
+                if (probe.length === LIMIT && oldest && Date.parse(oldest.updated_at) > from) {
+                    const mid = Math.floor((lo + hi) / 2);
+                    Debug("ingester:posts", `recovery: ${lo}..${hi} has more than ${PROBE_PAGE} pages of updates, splitting`);
+                    state.ranges.splice(0, 1, [lo, mid], [mid + 1, hi]);
+                    await save(state);
+                    continue;
+                }
+            }
             let finished = false;
             for (; state.page <= MAX_PAGE && !finished; state.page++) {
                 await stop();
