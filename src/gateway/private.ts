@@ -9,6 +9,12 @@ import redis, { createRedis } from "../redis.ts";
 import { describeCredentials, type Credentials } from "./auth.ts";
 import { accessToken } from "./oauth.ts";
 
+// private events (dmails, private sets). these can only be seen with the user's own credentials, so the gateway polls
+// them for each user that subscribed to them, and only sends them to that user. they never go on the stream
+// with several gateways, a user's connections could be spread across them. a redis lock makes sure only one gateway
+// polls each user & source, and what it finds goes out over pub/sub to every gateway
+
+// id is made up here since there's no stream id, it's `<type>:<record id>` (plus the time for sets)
 export interface PrivateEvent { data: unknown; id: string; time: string; type: PrivateEventType }
 
 interface Source {
@@ -16,6 +22,7 @@ interface Source {
     poll(search: <T>(fn: (client: Client) => Promise<T>) => Promise<T>, userId: number): Promise<Array<PrivateEvent>>;
 }
 
+// a session that wants private events
 export interface PrivateMember {
     credentials: Credentials;
     privateTypes: Set<PrivateEventType>;
@@ -26,14 +33,18 @@ export interface PrivateMember {
 const LIMIT = 320;
 const MAX_PAGES = 5;
 const MAX_ID = 2_147_483_647;
+// how often it looks for users that are due, each user is still only polled every PRIVATE_POLL_INTERVAL_MS
 const TICK_MS = 5000;
+// a user's cursors are forgotten if they don't connect for this long, they start from now again after
 const STATE_TTL_SECONDS = 90 * 24 * 60 * 60;
 const channel = `${redisPrefix}:private`;
+// whose lock it is
 const gatewayId = crypto.randomUUID();
 
 const stateKey = (source: string, userId: number): string => `${redisPrefix}:private:${source}:${userId}`;
 const lockKey = (source: string, userId: number): string => `${redisPrefix}:private:lock:${source}:${userId}`;
 
+// an id feed, like feeds.ts. the first poll only stores the newest id
 async function dmails(search: Parameters<Source["poll"]>[0], userId: number): Promise<Array<PrivateEvent>> {
     const key = stateKey("dmail.create", userId);
     const stored = await redis.get(key);
@@ -55,6 +66,9 @@ async function dmails(search: Parameters<Source["poll"]>[0], userId: number): Pr
     return events;
 }
 
+// every private set of theirs, compared against the post ids we had for it. stored in a redis hash of set id ->
+// { post_ids, updated_at }, not the snapshots table (that's public through the snapshot op)
+// store is there for tests
 export async function privateSets(search: Parameters<Source["poll"]>[0], userId: number, store: Pick<typeof redis, "send"> = redis): Promise<Array<PrivateEvent>> {
     const key = stateKey("private_post_set", userId);
     const known = new Map(Object.entries(await store.send("HGETALL", [key]) as Record<string, string> | null ?? {}).map(([id, raw]) => [id, JSON.parse(raw) as { post_ids: Array<number>; updated_at: string }]));
@@ -81,15 +95,19 @@ export async function privateSets(search: Parameters<Source["poll"]>[0], userId:
     return events.sort((a, b) => a.time.localeCompare(b.time));
 }
 
+// one poll can cover several event types
 const SOURCES: Record<string, Source> = {
     "dmail.create": { types: ["dmail.create"], poll: dmails },
     "private_post_set": { types: ["private_post_set.add_posts", "private_post_set.remove_posts"], poll: privateSets },
 };
 const sourceOf = (type: PrivateEventType): string => Object.entries(SOURCES).find(([, source]) => source.types.includes(type))![0];
 
+// user id -> their sessions on this gateway that want private events
 const members = new Map<number, Set<PrivateMember>>();
+// `<source>:<user id>` -> when it was last polled
 const lastPolled = new Map<string, number>();
 
+// after a session's subscriptions change. no private types left removes it
 export function updatePrivate(member: PrivateMember): void {
     let set = members.get(member.userId);
     if (member.privateTypes.size === 0) {
@@ -107,6 +125,8 @@ export function removePrivate(member: PrivateMember): void {
     if (set?.size === 0) members.delete(member.userId);
 }
 
+// takes the lock, or keeps it if it's already ours. it outlasts a few poll intervals, so if the gateway holding it
+// goes away (or the user disconnects from it) another one takes over soon after
 async function own(source: string, userId: number): Promise<boolean> {
     const key = lockKey(source, userId), ttl = String(privatePollIntervalMS * 3);
     if (await redis.send("SET", [key, gatewayId, "NX", "PX", ttl]) === "OK") return true;
@@ -115,6 +135,7 @@ async function own(source: string, userId: number): Promise<boolean> {
     return true;
 }
 
+// polls one source for one user, with whichever of their sessions' credentials came first
 async function poll(name: string, userId: number, credentials: Credentials): Promise<void> {
     const search = async <T>(fn: (client: Client) => Promise<T>): Promise<T> => {
         let client: Client;
@@ -144,15 +165,18 @@ async function tick(): Promise<void> {
             try {
                 if (await own(name, userId)) await poll(name, userId, member.credentials);
             } catch (err) {
+                // bad credentials are dealt with by recheckAuth closing the session
                 if (!(err instanceof AuthError)) Debug("gateway:private", `${name} for user ${userId} failed: ${String(err)}`);
             }
         }
     }
+    // forget users that aren't connected anymore
     for (const key of lastPolled.keys()) if (!members.has(Number(key.split(":").at(-1)))) lastPolled.delete(key);
 }
 
 export async function startPrivate(): Promise<void> {
     const subscriber = createRedis();
+    // every gateway gets every user's private events, each only hands them to its own sessions for that user
     await subscriber.subscribe(channel, (message) => {
         const { user_id: userId, ...event } = JSON.parse(message) as PrivateEvent & { user_id: number };
         if (!PRIVATE_EVENT_TYPES.includes(event.type)) return;

@@ -6,6 +6,10 @@ import redis, { createRedis } from "../redis.ts";
 import { CloseCodes } from "./protocol.ts";
 import { sessions } from "./session.ts";
 
+// bans & dropping connections from the admin page. bans are stored in redis and checked when someone identifies.
+// the admin page can be on any gateway, so commands go out over pub/sub and every gateway runs them on its own sessions
+
+// these are bans from E621Stream, not e621
 export interface Ban {
     banned_at: string;
     banned_by: string;
@@ -25,6 +29,7 @@ export async function listBans(): Promise<Array<Ban>> {
     return values.map(value => JSON.parse(value) as Ban).sort((a, b) => b.banned_at.localeCompare(a.banned_at));
 }
 
+// also drops every connection they have
 export async function ban(entry: Ban): Promise<void> {
     await redis.send("HSET", [bansKey, String(entry.user_id), JSON.stringify(entry)]);
     await redis.publish(adminChannel, JSON.stringify({ op: "ban", user_id: entry.user_id } satisfies Command));
@@ -46,6 +51,7 @@ function run(command: Command): void {
 }
 
 export async function startModeration(): Promise<void> {
+    // a subscribed connection can't run other commands
     const subscriber = createRedis();
     await subscriber.subscribe(adminChannel, (message) => {
         try {

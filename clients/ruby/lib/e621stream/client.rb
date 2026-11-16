@@ -52,6 +52,7 @@ module E621Stream
     end
 
     HEARTBEAT_SECONDS = 30
+    # nothing at all from the server for this long (not even a heartbeat ack) and the connection's treated as dead
     SILENT_SECONDS = 75
     MAX_DELAY_SECONDS = 60
 
@@ -82,8 +83,10 @@ module E621Stream
       @listeners = T.let(Hash.new { |hash, key| hash[key] = [] }, T::Hash[String, T::Array[Listener]])
       @connection = T.let(nil, T.untyped)
       @closing = T.let(false, T::Boolean)
+      # reconnects since the last ready, the backoff grows with it
       @attempt = T.let(0, Integer)
       @last_message = T.let(0.0, Float)
+      # the error op comes right before the close, it's kept until then so the close can say why
       @last_error = T.let(nil, T.nilable(StreamError))
       @ready = T.let(false, T::Boolean)
       @nonce = T.let(0, Integer)
@@ -115,6 +118,7 @@ module E621Stream
           break unless reconnecting
 
           @attempt += 1
+          # 1, 4, 9... seconds up to a minute, or 30 when rate limited, plus up to a second
           delay = code == CloseCodes::RATE_LIMITED ? 30 : [@attempt**2, MAX_DELAY_SECONDS].min
           delay += rand
           emit("reconnecting", { attempt: @attempt, delay: delay })
@@ -152,6 +156,7 @@ module E621Stream
 
     private
 
+    # one connection, start to finish. returns the close code & reason
     sig { returns([Integer, String]) }
     def connect_once
       # fetched every time, so it can move
@@ -168,6 +173,7 @@ module E621Stream
           heartbeat.stop
           @connection = nil
           @ready = false
+          # their blocks are never called, see #snapshots
           @pending_snapshots.clear
         end
       end
@@ -194,6 +200,7 @@ module E621Stream
       end
     end
 
+    # every op the server sends, anything unknown is ignored
     sig { params(message: T::Hash[String, T.untyped]).void }
     def handle(message)
       data = message["d"]
@@ -230,6 +237,7 @@ module E621Stream
         pending = @pending_snapshots[data["nonce"]]
         return unless pending
 
+        # json keys are strings
         data["snapshots"].each { |id, snapshot| pending[1][id.to_i] = snapshot }
         # older servers don't send done
         return if data["done"] == false

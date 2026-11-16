@@ -31,6 +31,16 @@ import { CloseCodes, compareIds, parseCursor, parseSnapshotRequest, PROTOCOL_VER
 
 import type { ServerWebSocket } from "bun";
 
+// one websocket connection. how a connection goes:
+//  1. hello is sent on open
+//  2. the client sends identify (auth, subscriptions, maybe a cursor) within IDENTIFY_TIMEOUT_MS
+//  3. ready is sent. without a cursor it's live right away
+//  4. with a cursor it replays everything after it from the stream first, holding live events in a backlog, then
+//     sends replay_complete and goes live
+// after that the client can change its subscriptions, look up snapshots, and heartbeat. anything wrong closes the
+// connection with an error message first, there's no recoverable errors
+
+// set on upgrade in index.ts
 export interface SocketData {
     compression: CompressionType | null;
     headerAuth: Credentials | null;
@@ -38,16 +48,21 @@ export interface SocketData {
     session?: Session;
 }
 
+// pending: waiting for identify
 export type State = "pending" | "replaying" | "live" | "closed";
 
+// e621's privileged level, they get a higher message limit
 const PRIVILEGED_LEVEL = 30;
 
+// live events held while replaying, a replay that falls this far behind is closed
 const MAX_BACKLOG = 50_000;
 
+// every connection on this gateway
 export const sessions = new Set<Session>();
 const connectionsByIP = new Map<string, number>();
 const connectionsByUser = new Map<number, number>();
 
+// adds to a counter, removing it at 0
 function bump<K>(map: Map<K, number>, key: K, by: number): number {
     const value = (map.get(key) ?? 0) + by;
     if (value <= 0) map.delete(key);
@@ -55,6 +70,7 @@ function bump<K>(map: Map<K, number>, key: K, by: number): number {
     return value;
 }
 
+// identify's auth, null if it's malformed
 function parseCredentials(value: unknown): Credentials | null {
     if (!value || typeof value !== "object") return null;
     const { username, api_key: apiKey, token } = value as Record<string, unknown>;
@@ -71,16 +87,23 @@ export function connectionCount(ip: string): number {
 }
 
 export class Session {
+    // live events that came in while replaying
     private backlog: Array<StreamItem> = [];
+    // whether these credentials can poll private events
     private canPrivate = false;
     private compressor: StreamCompressor | null;
     private credentials: Credentials | null = null;
+    // identify is async, this stops a second one while the first is still checking auth
     private identifying = false;
     private identifyTimer: Timer;
+    // the id of the last thing sent, what heartbeat_ack & replay_complete give back as the cursor to resume from
     private lastSent: string | null = null;
+    // when each message in the last minute came in, for the rate limit
     private messageTimes: Array<number> = [];
+    // this session's entry in private.ts, while it has private subscriptions
     private privateMember: PrivateMember | null = null;
     private subscriptions: Array<CompiledSubscription> = [];
+    // the name from identify
     client: string | null = null;
     readonly connectedAt = new Date();
     readonly id = randomUUID();
@@ -105,10 +128,12 @@ export class Session {
         });
     }
 
+    // bytes waiting to go out, compressed or not
     private buffered(): number {
         return this.ws.getBufferedAmount() + (this.compressor?.pending ?? 0);
     }
 
+    // closes the connection and returns null if they're invalid
     private compileSubscriptions(input: unknown): Array<CompiledSubscription> | null {
         if (!Array.isArray(input) || input.length === 0) {
             this.close(CloseCodes.INVALID_SUBSCRIPTION, "no subscriptions");
@@ -139,6 +164,8 @@ export class Session {
         return true;
     }
 
+    // private events aren't on the stream, so they have no stream id and aren't replayed. their id is made up in
+    // private.ts and they're flagged with private: true
     private deliverPrivate({ data, id, time, type }: PrivateEvent): void {
         if (this.state === "pending" || this.state === "closed" || !this.privateMember?.privateTypes.has(type)) return;
         this.send({ op: "dispatch", id, type, time, private: true, data });
@@ -156,12 +183,14 @@ export class Session {
             return;
         }
 
+        // auth in identify wins over the header
         const credentials = d.auth === undefined ? this.ws.data.headerAuth : parseCredentials(d.auth);
         if (d.auth !== undefined && !credentials) {
             Debug("gateway:auth", `${this.id} from ${this.ws.data.ip} sent malformed auth`);
             this.close(CloseCodes.DECODE_ERROR, "invalid auth");
             return;
         }
+        // credentials sent when they aren't required are still checked
         if (authRequired || credentials) {
             if (!credentials) {
                 Debug("gateway:auth", `${this.id} from ${this.ws.data.ip} didn't send any credentials`);
@@ -176,6 +205,7 @@ export class Session {
                 this.close(CloseCodes.UNKNOWN_ERROR, "couldn't reach e621");
                 return;
             }
+            // they could have disconnected while that was going
             if (this.is("closed")) return;
             if (!result.ok) {
                 Debug("gateway:auth", `${describeCredentials(credentials)} from ${this.ws.data.ip} failed verification: ${result.reason}`);
@@ -224,7 +254,9 @@ export class Session {
             return;
         }
 
+        // set before anything's awaited, so live events start going into the backlog right away
         this.state = "replaying";
+        // a cursor older than the stream's oldest event means some were trimmed, the client is told so in ready
         const [oldest] = await redis.send("XRANGE", [streamKey, "-", "+", "COUNT", "1"]) as Array<StreamEntry>;
         const expired = oldest !== undefined && compareIds(cursor, oldest[0]) < 0;
         this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: true, cursor_expired: expired, recovery } });
@@ -236,6 +268,7 @@ export class Session {
         return this.state === state;
     }
 
+    // the snapshot op. answered in chunks, ids we don't have are null. waits between chunks if the client is behind
     private async lookup(d: unknown): Promise<void> {
         const request = parseSnapshotRequest(d, maxSnapshotIds);
         if (typeof request === "string") {
@@ -257,6 +290,9 @@ export class Session {
         }
     }
 
+    // reads the stream after the cursor in batches, waiting whenever the client's behind. once it's caught up, the
+    // backlog is sent (skipping anything the replay already covered) and it goes live. there's no gap between the
+    // two since the backlog started filling before the first read
     private async replay(cursor: string): Promise<void> {
         let from = cursor;
         let sent = 0;
@@ -281,6 +317,7 @@ export class Session {
         this.send({ op: "replay_complete", d: { events: sent, cursor: this.lastSent ?? from } });
     }
 
+    // strings are sent as is (frames from events.ts), objects are stringified
     private send(payload: object | string): void {
         if (this.state === "closed") return;
         const data = typeof payload === "string" ? payload : JSON.stringify(payload);
@@ -294,6 +331,8 @@ export class Session {
         if (this.buffered() > maxBufferedBytes) this.close(CloseCodes.SLOW_CONSUMER, "too slow");
     }
 
+    // replaces every subscription. private ones need credentials that can poll them, and register this session with
+    // private.ts (or unregister it, when there's none left)
     private setSubscriptions(subs: Array<CompiledSubscription>): boolean {
         const privateTypes = new Set(subs.flatMap(sub => [...sub.privateTypes]));
         if (privateTypes.size !== 0 && (!this.credentials || !this.user)) {
@@ -317,6 +356,7 @@ export class Session {
         return this.subscriptions.map(sub => sub.source);
     }
 
+    // when the socket's closed, by either side
     cleanup(): void {
         this.state = "closed";
         clearTimeout(this.identifyTimer);
@@ -327,6 +367,7 @@ export class Session {
         if (this.user) bump(connectionsByUser, this.user.id, -1);
     }
 
+    // sends an error with the reason, then closes with the same code & reason
     close(code: CloseCode, reason: string): void {
         if (this.state === "closed") return;
         Debug("gateway:session", `closing ${this.id} from ${this.ws.data.ip} (user: ${this.user ? `${this.user.name} #${this.user.id}` : "none"}, client: ${this.client ?? "unknown"}): ${code} ${reason}`);
@@ -338,6 +379,7 @@ export class Session {
         else finish();
     }
 
+    // every message counts towards the rate limit, even bad ones
     async handleMessage(message: string | Buffer): Promise<void> {
         if (this.state === "closed") return;
         const now = Date.now();
@@ -395,6 +437,7 @@ export class Session {
     }
 
     // returns whether it was sent now, events held for after a replay don't count
+    // called by the hub for every event, pending sessions get nothing
     offer(event: StreamItem): boolean {
         if (this.state === "live") return this.deliver(event) || isNotice(event);
         if (this.state === "replaying") {
@@ -404,6 +447,7 @@ export class Session {
         return false;
     }
 
+    // every minute from index.ts
     async recheckAuth(): Promise<void> {
         if (!this.credentials || this.state === "closed") return;
         const result = await verify(this.credentials);

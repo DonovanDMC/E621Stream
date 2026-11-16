@@ -1,6 +1,7 @@
 import type { EventDataMap } from "./generated.ts";
 
 // keep in sync with src/events.ts
+// the four lists here are rewritten by `bun run client-types` in the server repo, everything else is by hand
 
 export const EVENT_TYPES = [
     "artist.create",

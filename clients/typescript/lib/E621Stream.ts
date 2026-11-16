@@ -49,6 +49,7 @@ export type SnapshotResource = keyof SnapshotDataMap;
 /** Keyed by id, `null` for ones that aren't known. */
 export type Snapshots<R extends SnapshotResource> = Record<number, SnapshotDataMap[R] | null>;
 
+// a snapshots() call waiting on its answer, chunks are merged into received until the last one
 interface PendingSnapshot { received: Snapshots<SnapshotResource>; reject(err: Error): void; resolve(snapshots: Snapshots<SnapshotResource>): void }
 
 export interface ClientEvents {
@@ -64,6 +65,7 @@ export interface ClientEvents {
     subscribed: [Array<Subscription>];
 }
 
+// the client events, plus one per event type
 type Listeners = ClientEvents & { [K in EventType | PrivateEventType]: [StreamEvent<K>] };
 
 export class StreamError extends Error {
@@ -73,6 +75,7 @@ export class StreamError extends Error {
     }
 }
 
+// reconnecting after these would just get closed the same way again
 const FATAL = new Set<number>([
     CloseCodes.UNKNOWN_OP,
     CloseCodes.DECODE_ERROR,
@@ -97,17 +100,23 @@ const HEARTBEAT_MS = 30_000;
  * ```
  */
 export class E621Stream extends Emitter<Listeners> {
+    // reconnect attempts since the last ready, for the backoff
     private attempt = 0;
+    // close() was called, so don't reconnect
     private closing = false;
+    // fetching /info
     private connecting = false;
     private heartbeat: ReturnType<typeof setInterval> | null = null;
+    // the server sends an error op right before closing, it's held until the close so both can be reported together
     private lastError: StreamError | null = null;
     private lastHeartbeatAck = true;
+    // matches snapshot answers to their request
     private nonce = 0;
     private pendingSnapshots = new Map<string, PendingSnapshot>();
     private ready = false;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private socket: WebSocket | null = null;
+    /** The id of the last event seen, sent when reconnecting so nothing's missed. */
     cursor: string | null;
     readonly options: Options & { url: string };
 
@@ -117,6 +126,7 @@ export class E621Stream extends Emitter<Listeners> {
         this.cursor = options.cursor === undefined ? null : String(options.cursor);
     }
 
+    // every message from the server. binary would be compressed, which this never asks for
     private handle(raw: unknown): void {
         if (typeof raw !== "string") {
             this.emit("error", new Error("compression isn't supported"));
@@ -144,6 +154,7 @@ export class E621Stream extends Emitter<Listeners> {
                 break;
             }
             case "dispatch": {
+                // private events aren't on the stream, their id can't be replayed from
                 const event = { id: message.id, type: message.type, time: message.time, data: message.data, ...(message.private ? { private: true } : {}), ...(message.recovered ? { recovered: true } : {}) } as StreamEvent;
                 if (!event.private) this.cursor = event.id;
                 this.emit("dispatch", event);
@@ -190,6 +201,8 @@ export class E621Stream extends Emitter<Listeners> {
         }
     }
 
+    // rejects pending snapshots, then reconnects with backoff (1s doubling, 30s base when rate limited, up to a minute,
+    // with jitter) unless it was closed on purpose or with a fatal code
     private onClose(code: number, reason: string): void {
         this.stopHeartbeat();
         this.socket = null;
@@ -223,6 +236,7 @@ export class E621Stream extends Emitter<Listeners> {
             }
         });
         socket.addEventListener("close", (event: CloseEvent) => { this.onClose(event.code, event.reason); });
+        // close always follows, that's where it's handled
         socket.addEventListener("error", () => null);
     }
 
@@ -230,6 +244,7 @@ export class E621Stream extends Emitter<Listeners> {
         if (this.socket?.readyState === 1) this.socket.send(JSON.stringify(payload));
     }
 
+    // a heartbeat with no ack by the next one means the connection's dead, closing it gets a reconnect going
     private startHeartbeat(): void {
         this.lastHeartbeatAck = true;
         this.heartbeat = setInterval(() => {
@@ -266,6 +281,7 @@ export class E621Stream extends Emitter<Listeners> {
         this.socket?.close(1000, "closed by client");
     }
 
+    /** Connect, does nothing if already connected or connecting. */
     connect(): this {
         if (this.socket || this.connecting) return this;
         this.closing = false;
@@ -305,6 +321,7 @@ export class E621Stream extends Emitter<Listeners> {
 
     /** Replace the current subscriptions. */
     subscribe(subscriptions: Array<Subscription>): void {
+        // kept, so a reconnect identifies with these
         this.options.subscriptions = subscriptions;
         this.send({ op: "subscribe", d: { subscriptions } });
     }

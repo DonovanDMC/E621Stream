@@ -4,9 +4,17 @@ import { crawl, CRAWLS } from "./crawl.ts";
 import { importPosts, importRequests } from "./exports.ts";
 import { getState, setState, type BackfillState } from "./state.ts";
 
+// the backfill fills the snapshots table with records from before the ingester started, so their updates have
+// something to diff against. two kinds:
+//  - export: e621's daily db exports (csv), imported straight into postgres (exports.ts)
+//  - crawl: paging back through an endpoint by id, for things that aren't in the exports (crawl.ts)
+// exports and crawls run in two loops side by side. anything that isn't done is tried again every few minutes, once
+// everything's done it only checks every hour (a reset from the cli gets picked up then)
+
 export interface Source {
     kind: BackfillState["kind"];
     name: string;
+    // true when it's finished, false when it can't yet (a crawl waiting on its feed). throws when it fails
     run(): Promise<boolean>;
 }
 
@@ -23,6 +31,7 @@ export const SOURCES = [...EXPORTS, ...CRAWL_SOURCES];
 const RETRY_MS = 5 * 60_000;
 const IDLE_MS = 60 * 60_000;
 
+// returns whether it still needs to run again. crawls keep their own state, exports have it set here
 export async function runSource(source: Source): Promise<boolean> {
     if ((await getState(source.name))?.status === "done") return false;
     const start = Date.now();
@@ -48,6 +57,7 @@ async function loop(sources: Array<Source>): Promise<never> {
 }
 
 export function startBackfill(): void {
+    // makes sure every source has a row, so the status page lists them all from the start
     for (const source of SOURCES) void setState(source.name, source.kind, {}).catch(() => null);
     void loop(EXPORTS);
     void loop(CRAWL_SOURCES);

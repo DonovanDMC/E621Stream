@@ -8,22 +8,34 @@ import redis from "../redis.ts";
 import { afterPostEvent } from "./postEvents.ts";
 import { isPrivateSet, remember, TRACKED, type Tracked } from "./updates.ts";
 
+// id feeds. most e621 endpoints can page by id: `a<id>` is everything after that id, `b<id>` everything before it.
+// each feed keeps the highest id it's seen as its cursor and asks for everything after it, every new item is published
+// as the feed's event (usually <resource>.create)
+
 interface Page { limit: number; page: `${"a" | "b"}${number}` }
 
 export interface FeedSource {
+    // published for every new item, with the item as data
     event: EventType;
     intervalMS: number;
+    // also its cursor field, and what DISABLED_SOURCES & recoveries call it
     name: string;
+    // new items are snapshotted, so the matching UpdateFeed has something to diff against
     tracked?: Tracked;
+    // extra work after the item's published, returns how many more events it published
     after?(item: Item): Promise<number>;
+    // a second event to publish with the same data, e.g. a later note version is also a note.update
     derive?(item: Item): EventType | undefined | Promise<EventType | undefined>;
+    // more events with their own data, e.g. pool.add_posts from a pool version
     expand?(item: Item): Array<{ data: unknown; type: EventType }>;
+    // items that shouldn't be sent at all
     private?(item: Item): boolean;
     search(page: Page): Promise<Array<Item> | null>;
 }
 
 interface Item { created_at?: string | null; id: number; updated_at?: string | null }
 
+// version 1 is the record being created (already its own .create), anything after is an update
 const laterVersion = (event: EventType) => (item: Item): EventType | undefined => ((item as { version?: number }).version ?? 0) > 1 ? event : undefined;
 
 // artist & wiki versions aren't numbered, a0 gets the oldest one
@@ -51,6 +63,7 @@ async function isFirstAvoidPostingVersion(item: Item): Promise<boolean> {
     return first?.id === item.id;
 }
 
+// pool versions list what was added & removed
 function poolMembers(item: Item): Array<{ data: unknown; type: EventType }> {
     const version = item as { added_post_ids?: Array<number>; removed_post_ids?: Array<number> };
     const out: Array<{ data: unknown; type: EventType }> = [];
@@ -59,6 +72,7 @@ function poolMembers(item: Item): Array<{ data: unknown; type: EventType }> {
     return out;
 }
 
+// the intervals are roughly how busy each one is, the busier ones are checked more often
 export const FEEDS: Array<FeedSource> = [
     { name: "post_versions", event: "post_version.create", intervalMS: 8000, search: page => e621.postVersions.search(page) },
     { name: "post_events", event: "post_event.create", intervalMS: 8000, search: page => e621.postEvents.search({ ...page, v1: true }), after: afterPostEvent },
@@ -95,20 +109,26 @@ export const FEEDS: Array<FeedSource> = [
     { name: "news_updates", event: "news_update.create", intervalMS: 120_000, search: page => e621.newsUpdates.search(page), tracked: TRACKED.newsUpdate },
 ];
 
+// e621's max page size
 const LIMIT = 320;
 const timeOf = (item: Item): number | null => {
     const time = Date.parse(item.created_at ?? item.updated_at ?? "");
     return Number.isNaN(time) ? null : time;
 };
+// a backlog bigger than this is picked up over the next polls
 const MAX_PAGES_PER_POLL = 10;
 // ids are assigned when a transaction starts, not when it commits, so rows can show up behind the cursor
+// so every poll starts this many ids back, and `seen` stops those being sent twice
 const OVERLAP = 25;
 // the largest b<id> e621 accepts
 const MAX_ID = 2_147_483_647;
 
 export class Feed {
+    // the highest id seen, null until init
     private cursor: number | null = null;
+    // anything at or below this is old, ids between it and the cursor are checked against `seen`
     private floor = 0;
+    // ids published in the overlap, so they aren't published again
     private seen = new Set<number>();
     constructor(readonly source: FeedSource) {}
 
@@ -134,6 +154,7 @@ export class Feed {
         return lo;
     }
 
+    // the stored cursor, or on the very first run the newest id, so it starts from now instead of the beginning
     private async init(): Promise<number> {
         const stored = await redis.hget(cursorKey, this.source.name);
         if (stored) {
@@ -148,6 +169,7 @@ export class Feed {
         return this.cursor;
     }
 
+    // the main event, then derived/expanded ones, then the follow up. a follow up failing doesn't fail the poll
     private async publishItem(item: Item): Promise<number> {
         if (this.source.private?.(item)) return 0;
         const time = item.created_at ?? item.updated_at ?? new Date().toISOString();
@@ -163,6 +185,7 @@ export class Feed {
         });
     }
 
+    // moves the floor up to the overlap's start and forgets ids below it
     private trimSeen(): void {
         if (this.cursor === null) return;
         const floor = this.cursor - OVERLAP;
@@ -171,6 +194,7 @@ export class Feed {
         for (const id of this.seen) if (id <= floor) this.seen.delete(id);
     }
 
+    // pages forward from the cursor until a page isn't full. the cursor is saved after every page
     async poll(): Promise<number> {
         let cursor = this.cursor ?? await this.init();
         let published = 0;
@@ -201,6 +225,7 @@ export class Feed {
         const stored = await redis.hget(cursorKey, this.source.name);
         if (!stored) return 0;
         const top = Number(stored);
+        // finds where the window starts, then pages forward through it by id
         let after = await this.idBefore(from, top);
         let published = 0;
         for (;;) {

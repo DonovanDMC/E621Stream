@@ -9,6 +9,13 @@ import { Feed, FEEDS } from "./feeds.ts";
 import { PostsFeed, type PostsCheckpoint } from "./posts.ts";
 import { UpdateFeed, UPDATES } from "./updates.ts";
 
+// the ingester side of recoveries (see ../recovery.ts). every few seconds it checks for one to run, then goes through
+// each source in turn, re-fetching the window and publishing what wasn't sent the first time. the update feeds & posts
+// diff against snapshots, so anything already sent is a no-op for them. the id feeds have no snapshots, so what
+// they already sent is read back off the stream (alreadySent)
+// progress is saved to the recovery record as it goes, so the status page can show it and a restart can carry on
+
+// thrown out of stop()/save() to unwind everything when an admin cancels
 class Cancelled extends Error {}
 
 /** a source's saved spot, `save` also checks for a cancel. the rest is shown on the status page while it runs */
@@ -17,19 +24,23 @@ export interface Checkpoint<T = unknown> {
     save(state: T, progress: { detail: string; events: number; fraction: number }): Promise<void>;
 }
 
+// from/to are ms, stop throws if it was cancelled, sent is alreadySent's result. returns how many events it published
 type Run = (from: number, to: number, stop: () => Promise<void>, sent: Map<string, Set<number>>, checkpoint: Checkpoint) => Promise<number>;
 
 // window mode update sources only ever see their newest page, so there's nothing to go back through
+// fresh feed instances are used so the live feeds' cursors aren't touched
 const RUNS: Record<string, Run> = {
     posts: (from, to, stop, sent, checkpoint) => new PostsFeed().recover(from, to, sent.get("post.create") ?? new Set(), stop, checkpoint as Checkpoint<PostsCheckpoint>),
     ...Object.fromEntries(FEEDS.map(source => [source.name, ((from, to, stop, sent): Promise<number> => new Feed(source).recover(from, to, sent.get(source.event) ?? new Set(), stop)) satisfies Run])),
     ...Object.fromEntries(UPDATES.filter(source => source.mode === "ordered").map(source => [source.name, ((from, to, stop): Promise<number> => new UpdateFeed(source).recover(from, to, stop)) satisfies Run])),
 };
 
+// what the admin page offers
 export const RECOVERABLE = Object.keys(RUNS).filter(name => !disabledSources.has(name));
 
 // ids of what the id feeds (and post.create) already published since `from`, recovered or not. there's no snapshots to
 // tell from
+// event type -> ids. only goes back as far as the stream does (RETENTION_HOURS)
 async function alreadySent(from: number, sources: Array<string>): Promise<Map<string, Set<number>>> {
     const types = new Map(FEEDS.filter(source => sources.includes(source.name)).map(source => [source.event as string, new Set<number>()]));
     if (sources.includes("posts")) types.set("post.create", new Set());
@@ -47,10 +58,13 @@ async function alreadySent(from: number, sources: Array<string>): Promise<Map<st
             if (typeof id === "number") ids.add(id);
         }
         if (entries.length < 1000) return types;
+        // ( is exclusive
         start = `(${entries.at(-1)![0]}`;
     }
 }
 
+// clients get a recovery notice when it starts and when it finishes. sources that are already done (from before a
+// restart) are skipped. one source failing doesn't stop the rest, the recovery only fails if all of them do
 async function run(recovery: Recovery): Promise<void> {
     const from = Date.parse(recovery.from), to = Date.parse(recovery.to);
     Debug("ingester:recovery", `${recovery.id}: recovering ${recovery.from} to ${recovery.to} for ${recovery.sources.join(", ")}`);
@@ -62,6 +76,7 @@ async function run(recovery: Recovery): Promise<void> {
         await saveRecovery(recovery);
         if (cancelled) throw new Cancelled();
     };
+    // sources call this between pages
     const stop = async (): Promise<void> => {
         if ((await getRecovery())?.status === "cancelled") throw new Cancelled();
     };
@@ -91,6 +106,7 @@ async function run(recovery: Recovery): Promise<void> {
                 },
             };
             try {
+                // everything published inside this gets flagged as recovered
                 progress.events = await recoveryContext.run(recovery.id, () => fn(from, to, stop, sent, checkpoint));
                 progress.status = "done";
                 delete progress.checkpoint;

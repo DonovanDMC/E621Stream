@@ -3,6 +3,9 @@ import redis from "../redis.ts";
 
 import type { E621User } from "./auth.ts";
 
+// /admin logins. the cookie is a random value, redis has its hash -> who it is. it's its own file so oauth.ts can log
+// admins in without importing admin.ts (which imports oauth.ts)
+
 export type Admin = Pick<E621User, "id" | "name">;
 
 const COOKIE = "e621stream_admin";
@@ -17,6 +20,7 @@ export function sessionToken(req: Request): string | null {
     return null;
 }
 
+// strict, so other sites can't post to the admin forms. an empty value with maxAge 0 logs out
 export function sessionCookie(req: Request, value: string, maxAge: number): string {
     const secure = new URL(req.url).protocol === "https:" || (trustProxy && req.headers.get("x-forwarded-proto") === "https");
     return `${COOKIE}=${value}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;

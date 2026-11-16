@@ -23,19 +23,34 @@ import { PAGE_CSS } from "./status.ts";
 
 import type { E621User, VerifyResult } from "./auth.ts";
 
+// /authorize, logging in with e621's oauth to make stream tokens. how it fits together:
+//  - logging in links an e621 account (oauth_links), with the oauth token kept so it can be refreshed & rechecked
+//  - a linked user can make stream tokens (e6s_...), which are what clients connect with instead of an api key
+//  - turning on private events asks e621 for the `full` scope, so private.ts can poll with the oauth token
+//  - the admin panel can log in through here too, that token's only used to see who they are and then revoked
+// the browser side is a cookie session (redis) that only lasts SESSION_HOURS, the link itself lasts until unlinked
+
 type OAuthScope = Generated.Types.OAuthScope;
 type OAuthToken = Generated.Types.OAuthToken;
 
+// holds the oauth state while they're over on e621
 const STATE_COOKIE = "e621stream_oauth";
+// the logged in session on /authorize
 const SESSION_COOKIE = "e621stream_tokens";
 const SESSION_HOURS = 12;
+// token names
 const MAX_NAME_LENGTH = 50;
+// how long someone has to finish authorizing on e621
 const PENDING_SECONDS = 600;
+// authorizations an ip can start per PENDING_SECONDS
 const MAX_STARTS = 20;
 // banned users are blocked
 const BLOCKED_LEVEL = 10;
+// so stream tokens can be told apart from api keys at a glance
 const TOKEN_PREFIX = "e6s_";
 
+// a row in oauth_links. full is whether the token has the full scope (private events)
+// name/level/banned are from the last recheck, checked_at is when that was
 interface Link {
     banned: boolean;
     checked_at: Date;
@@ -54,7 +69,9 @@ const lockKey = (userId: number): string => `${redisPrefix}:oauth:lock:${userId}
 const sessionKey = (value: string): string => `${redisPrefix}:oauth:session:${sha256(value)}`;
 const scopesOf = (token: OAuthToken): Array<string> => token.scope.split(" ").filter(Boolean);
 
+// run by the gateway on start, only when oauth is set up
 export async function migrateOAuth(): Promise<void> {
+    // one per e621 user, token is the oauth token json (access, refresh, scope, expiry)
     await sql`
         CREATE TABLE IF NOT EXISTS oauth_links (
             user_id bigint PRIMARY KEY,
@@ -85,6 +102,7 @@ export async function migrateOAuth(): Promise<void> {
     await sql`CREATE INDEX IF NOT EXISTS stream_tokens_user ON stream_tokens (user_id)`;
 }
 
+// onToken is called when a refresh gives a new token, so it can be saved
 function oauthClient(token?: OAuthToken, onToken?: (token: OAuthToken | null) => Promise<void>): OAuthClient {
     return new OAuthClient({
         clientId: oauthClientId!,
@@ -106,12 +124,15 @@ export function isInvalidGrant(err: unknown): boolean {
     return (body !== null && typeof body === "object" && body.error === "invalid_grant") || err.message.includes("invalid_grant");
 }
 
+// only checks it looks like a stream token, verifyToken checks it's real
 export function parseToken(value: unknown): string | null {
     return typeof value === "string" && value.startsWith(TOKEN_PREFIX) && value.length < 200 ? value : null;
 }
 
+// only deletes the lock if it's still ours, it could have expired and been taken by someone else
 const RELEASE = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end return 0`;
 // refresh tokens are single use, so only one gateway can refresh a user's token at a time
+// anything else that changes a user's link takes it too. waits up to 15s for it
 async function withLock<T>(userId: number, fn: () => Promise<T>): Promise<T> {
     const key = lockKey(userId), id = crypto.randomUUID(), until = Date.now() + 15_000;
     while (await redis.send("SET", [key, id, "NX", "PX", "30000"]) !== "OK") {
@@ -135,11 +156,13 @@ async function saveToken(userId: number, token: OAuthToken | null): Promise<void
     if (token) await sql`UPDATE oauth_links SET token = ${JSON.stringify(token)}::jsonb WHERE user_id = ${userId}`;
 }
 
+// their tokens go with it (ON DELETE CASCADE), anything connected with them fails its next recheck
 async function unlink(userId: number, reason: string): Promise<void> {
     await sql`DELETE FROM oauth_links WHERE user_id = ${userId}`;
     Debug("gateway:oauth", `unlinked #${userId}: ${reason}`);
 }
 
+// tells e621 we're done with a token. failing is only logged
 async function revoke(token: OAuthToken): Promise<void> {
     await request("oauth revoke", () => oauthClient(token).revoke(), authQueue, 3)
         .catch((err: unknown) => { Debug("gateway:oauth", `couldn't revoke an old token: ${String(err)}`); });
@@ -166,6 +189,7 @@ export async function accessToken(userId: number): Promise<string | null> {
     });
 }
 
+// who a token belongs to. with full access /users/me works, without it only the openid userinfo does
 async function lookup(token: string, full: boolean): Promise<{ banned: boolean; user: E621User }> {
     const client = createClient({ authToken: token });
     if (full) {
@@ -181,6 +205,7 @@ async function lookup(token: string, full: boolean): Promise<{ banned: boolean; 
 
 const rechecks = new Map<number, Promise<Link | null>>();
 // shared so every session for a user doesn't go to e621 at once
+// the link, looked up again on e621 if it hasn't been in AUTH_CACHE_SECONDS. null if it's gone or stopped working
 function recheck(userId: number): Promise<Link | null> {
     let pending = rechecks.get(userId);
     if (!pending) {
@@ -207,6 +232,7 @@ function recheck(userId: number): Promise<Link | null> {
     return pending;
 }
 
+// a stream token, for auth.ts. last_used_at is only written once an hour so connecting isn't always a write
 export async function verifyToken(token: string): Promise<VerifyResult> {
     const hash = sha256(token);
     const [row] = await sql<Array<{ user_id: number | string }>>`SELECT user_id FROM stream_tokens WHERE hash = ${hash}`;
@@ -218,6 +244,7 @@ export async function verifyToken(token: string): Promise<VerifyResult> {
     return { ok: true, private: link.full, user: { id: link.user_id, name: link.name, level: link.level, level_string: link.level_string } };
 }
 
+// the html pages here are plain post forms, the only js is confirm() on the dangerous buttons
 function page(body: string, status = 200, headers: Headers | Record<string, string> = {}): Response {
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -273,6 +300,7 @@ interface TokenRow { created_at: Date; id: number | string; last_used_at: Date |
 
 const when = (date: Date | null): string => date ? `${date.toISOString().slice(0, 16).replace("T", " ")} UTC` : "<span class=\"dim\">never</span>";
 
+// a post form that's just a button, with an optional confirm()
 const button = (action: string, fields: Record<string, string | number>, label: string, confirm?: string): string => `<form class="inline" method="post" action="/authorize/${action}"${confirm ? ` data-confirm="${esc(confirm)}" onsubmit="return confirm(this.dataset.confirm)"` : ""}>${Object.entries(fields).map(([name, value]) => `<input type="hidden" name="${name}" value="${esc(value)}">`).join("")}<button type="submit" class="bad">${label}</button></form>`;
 
 interface ManageOptions { created?: { name: string; token: string }; error?: string; notice?: string; status?: number }
@@ -323,6 +351,7 @@ function cookie(req: Request, name: string, value: string, maxAge: number): stri
     return `${name}=${value}; Path=/authorize; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
 }
 
+// the link for the browser's session cookie
 async function loggedIn(req: Request): Promise<Link | null> {
     const value = cookieValue(req, SESSION_COOKIE);
     if (!value) return null;
@@ -334,8 +363,10 @@ async function loggedIn(req: Request): Promise<Link | null> {
     return link;
 }
 
+// what the authorization is for, decides what happens in the callback
 type Purpose = "admin" | "login" | "private";
 
+// kept in redis by state until the callback. the pkce verifier never leaves the server
 interface Pending { codeVerifier: string; purpose: Purpose }
 
 /** Sends someone to e621 to authorize, `null` if they've tried too many times. Only turning on private events asks for full access. */
@@ -354,6 +385,7 @@ export async function startAuthorization(req: Request, ip: string, purpose: Purp
 const adminError = (error: string, status: number): Response => page(`<p class="bad">${esc(error)}</p>
 <p><a href="/admin">Back to the admin panel</a></p>`, status);
 
+// the admin panel's oauth login, nothing is linked
 async function adminLogin(req: Request, ip: string, token: OAuthToken, clear: string): Promise<Response> {
     let user: E621User;
     try {
@@ -378,12 +410,15 @@ async function adminLogin(req: Request, ip: string, token: OAuthToken, clear: st
     return new Response(`<!DOCTYPE html><meta http-equiv="refresh" content="0;url=/admin"><a href="/admin">Continue to the admin panel</a>`, { headers });
 }
 
+// where e621 sends them back. checks the state, swaps the code for a token, then links the account (or logs the admin
+// in). a link being replaced has its old token revoked
 async function callback(req: Request, ip: string): Promise<Response> {
     const params = new URL(req.url).searchParams;
     const state = params.get("state") ?? "";
     const clear = cookie(req, STATE_COOKIE, "", 0);
     // the cookie ties the callback to the browser that started it
     if (state === "" || cookieValue(req, STATE_COOKIE) !== state) return loginPage("that login wasn't started here, try again", 400);
+    // GETDEL so a state can only be used once
     const pending = await redis.send("GETDEL", [pendingKey(state)]) as string | null;
     if (pending === null) return loginPage("that took too long, try again", 400);
     const { codeVerifier, purpose = "login" } = JSON.parse(pending) as Partial<Pending> & { codeVerifier: string };
@@ -415,6 +450,7 @@ async function callback(req: Request, ip: string): Promise<Response> {
         return loginPage("banned accounts can't connect", 403);
     }
 
+    // whichever token isn't kept, the new one or the one it replaced
     const unused = await withLock(user.id, async () => {
         const previous = await getLink(user.id);
         // logging in only asks who they are, so it can't replace a link with private events
@@ -439,6 +475,7 @@ async function callback(req: Request, ip: string): Promise<Response> {
 }
 
 // narrowed with a refresh, so it doesn't need another trip to e621
+// failed is e621 giving back full access anyway
 async function disablePrivate(userId: number): Promise<"done" | "failed" | "unlinked"> {
     return withLock(userId, async () => {
         const link = await getLink(userId);
@@ -460,6 +497,7 @@ async function disablePrivate(userId: number): Promise<"done" | "failed" | "unli
     });
 }
 
+// the post forms on the manage page, name is the path after /authorize/
 async function action(req: Request, ip: string, link: Link, name: string): Promise<Response> {
     const body = new URLSearchParams(await req.text().catch(() => ""));
     switch (name) {
@@ -471,6 +509,7 @@ async function action(req: Request, ip: string, link: Link, name: string): Promi
         case "tokens": {
             const tokenName = (body.get("name") ?? "").replaceAll(/\p{Cc}/gu, "").trim();
             if (tokenName === "" || tokenName.length > MAX_NAME_LENGTH) return managePage(link, { error: `names have to be 1-${MAX_NAME_LENGTH} characters`, status: 400 });
+            // only the hash is stored, this is the one time it's shown
             const token = `${TOKEN_PREFIX}${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")}`;
             // the count is checked in the insert, so two at once can't go over
             const inserted = await sql<Array<{ id: number | string }>>`
@@ -485,6 +524,7 @@ async function action(req: Request, ip: string, link: Link, name: string): Promi
         }
         case "tokens/delete": {
             const id = Number(body.get("id"));
+            // user_id too, so nobody can delete someone else's token by id
             if (Number.isSafeInteger(id)) await sql`DELETE FROM stream_tokens WHERE id = ${id} AND user_id = ${link.user_id}`;
             Debug("gateway:oauth", `${link.name} #${link.user_id} removed a token from ${ip}`);
             return redirect();
@@ -513,6 +553,7 @@ async function action(req: Request, ip: string, link: Link, name: string): Promi
     }
 }
 
+// every /authorize request, from index.ts
 export async function handleAuthorize(req: Request, ip: string): Promise<Response> {
     const { pathname } = new URL(req.url);
     if (pathname === "/authorize/callback" && req.method === "GET") return callback(req, ip);

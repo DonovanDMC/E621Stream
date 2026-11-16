@@ -2,6 +2,8 @@
 // bun run backfill verify
 // bun run backfill reset <source|all>
 // bun run backfill run <source...>
+// a cli for the backfill, the ingester runs the same sources on its own when BACKFILL is on. reset makes a source
+// start over next time, run runs sources here and now instead of waiting for the ingester
 import sql, { migrate } from "../db.ts";
 import { hasAuth } from "../e621.ts";
 
@@ -10,6 +12,7 @@ import { listStates, resetState } from "./state.ts";
 import { verify } from "./verify.ts";
 
 const [command, ...args] = process.argv.slice(2);
+// checks the names given, exits if any are wrong
 const names = (list: Array<string>): Array<string> => {
     const all = SOURCES.map(source => source.name);
     const picked = list.includes("all") ? all : list;
@@ -27,6 +30,7 @@ switch (command) {
         const states = new Map((await listStates()).map(state => [state.source, state]));
         for (const source of SOURCES) {
             const state = states.get(source.name);
+            // crawls count their cursor down from the ceiling, exports count up to it
             const progress = state?.ceiling ? ` ${Math.round(((state.kind === "crawl" ? state.ceiling - (state.cursor ?? state.ceiling) : state.cursor ?? 0) / state.ceiling) * 100)}%` : "";
             console.log(`${source.name.padEnd(22)} ${(state?.status ?? "pending").padEnd(8)} ${String(state?.stored ?? 0).padStart(10)} stored${progress}${state?.error ? `  ${state.error}` : state?.detail ? `  ${state.detail}` : ""}`);
         }

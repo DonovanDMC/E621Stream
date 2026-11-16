@@ -6,31 +6,46 @@ import { e621, getHTML, request } from "../e621.ts";
 import { publish, type EventType } from "../events.ts";
 import redis from "../redis.ts";
 
+// update feeds, for records that change after they're created (comments get edited, aliases get approved, ...). e621
+// doesn't say what changed, so the fields we care about are snapshotted and every update is diffed against that.
+// <resource>.update carries the record and `changes`, { field: { old, new } }
+// the snapshots come from the id feeds (new records), the backfill (old records), and these feeds themselves
+
 export interface Item { created_at?: string | null; id: number; updated_at?: string | null }
 interface SearchOptions { ids?: Array<number>; limit: number; page: number }
 interface IdsOptions { limit: number; page: number; since: Date | null }
 type Changes = Record<string, { new: unknown; old: unknown }>;
 
+// a resource that gets snapshotted, and which of its fields
 export interface Tracked {
     fields: Array<string>;
+    // a list of post ids that gets its own add/remove events instead of being in `changes`
     members?: { added: EventType; field: string; removed: EventType };
+    // the snapshots table's `resource`, also the key the record is under in event data
     resource: string;
 }
 
 export interface UpdateSource extends Tracked {
+    // for sources without an id feed of their own (help pages), new ids are published as this
     createEvent?: EventType;
     event: EventType;
     intervalMS: number;
     /** window: can't be sorted by updated_at, so the newest pages get rescanned every poll */
     mode: "ordered" | "window";
     name: string;
+    // the most pages one poll goes through
     pages: number;
+    // whether to publish an update with `changes: null` for records we have no snapshot of. only for sources where
+    // updated_at really means it was edited (forum topics bump it on every reply, so they don't)
     unknownChanges: boolean;
+    // gets the ids in updated order when search can't be sorted that way, search then fetches them by id
     ids?(options: IdsOptions): Promise<Array<number>>;
     private?(item: Item): boolean;
     search(options: SearchOptions): Promise<Array<Item> | null>;
 }
 
+// what's snapshotted for each resource. the id feeds, update feeds, backfill crawls & exports all use these so their
+// snapshots line up
 export const TRACKED = {
     comment: { resource: "comment", fields: ["body", "is_hidden", "is_sticky", "warning_type", "warning_user_id"] },
     forumPost: { resource: "forum_post", fields: ["body", "is_hidden", "warning_type", "warning_user_id"] },
@@ -49,8 +64,11 @@ export const TRACKED = {
 const LIMIT = 320;
 // e621 won't go past this page of numbered results
 const MAX_PAGE = 750;
+// ordered polls go back this far past the cursor, in case updated_at commits a little out of order
 const OVERLAP_MS = 5000;
+// updated_at within this of created_at is the record being created, not an edit
 const CREATION_SLACK_MS = 2000;
+// how far back comment ids are looked for when there's no cursor yet
 const FIRST_RUN_MS = 10 * 60_000;
 
 // comments.json 403s when ordering by updated_at, the html page doesn't
@@ -62,10 +80,13 @@ async function updatedCommentIds({ limit, page, since }: IdsOptions): Promise<Ar
     return [...new Set(Array.from(html.matchAll(/data-comment-id="(\d+)"/g), m => Number(m[1])))];
 }
 
+// private sets are only ever sent to their owner, see gateway/private.ts
 export const isPrivateSet = (item: Item): boolean => !(item as { is_public?: boolean }).is_public;
 
+// search[id] takes a comma separated list
 const ids = (options: SearchOptions): string | undefined => options.ids?.join(",");
 
+// ordered ones have to come back newest update first. which `order` gets that differs between endpoints
 export const UPDATES: Array<UpdateSource> = [
     { ...TRACKED.comment, name: "comment_updates", event: "comment.update", mode: "ordered", pages: 5, intervalMS: 30_000, unknownChanges: true, ids: updatedCommentIds, search: o => e621.comments.search({ limit: o.limit, id: ids(o), group_by: "comment" }) },
     // forum posts ignore updated_at ordering, so recent ones are rescanned
@@ -84,6 +105,7 @@ export const UPDATES: Array<UpdateSource> = [
     { ...TRACKED.helpPage, name: "help_pages", event: "help_page.update", createEvent: "help_page.create", mode: "window", pages: 1, intervalMS: 120_000, unknownChanges: false, search: () => e621.helpPages.list() },
 ];
 
+// the snapshot of an item, missing fields are stored as null
 export function pick(tracked: Tracked, item: Item): Record<string, unknown> {
     const record = item as unknown as Record<string, unknown>;
     const fields = tracked.members ? [...tracked.fields, tracked.members.field] : tracked.fields;
@@ -95,6 +117,8 @@ export function membership(before: unknown, after: unknown): { added: Array<numb
     return { added: [...b].filter(id => !a.has(id)), removed: [...a].filter(id => !b.has(id)) };
 }
 
+// skip is the members field, that's handled by membership(). fields the snapshot doesn't have (added to TRACKED later)
+// aren't reported as changes
 export function diff(before: Record<string, unknown>, after: Record<string, unknown>, skip?: string): Changes {
     const changes: Changes = {};
     for (const [field, value] of Object.entries(after)) {
@@ -104,15 +128,19 @@ export function diff(before: Record<string, unknown>, after: Record<string, unkn
     return changes;
 }
 
+// stores snapshots without diffing or publishing anything
 export async function remember(tracked: Tracked, items: Array<Item>): Promise<void> {
     await putSnapshots(tracked.resource, items.map(item => ({ id: item.id, version: versionOf(item), data: pick(tracked, item) })));
 }
 
 export class UpdateFeed {
+    // ordered: the newest updated_at seen, in ms
     private cursor: number | null = null;
+    // window with a createEvent: the highest id seen
     private maxId: number | null = null;
     constructor(readonly source: UpdateSource) {}
 
+    // full is whether there might be another page
     private async fetch(page: number, since: Date | null = null): Promise<{ full: boolean; items: Array<Item> }> {
         const { source } = this;
         if (!source.ids) {
@@ -122,11 +150,13 @@ export class UpdateFeed {
         const ids = await request(`${source.name} ids`, () => source.ids!({ limit: LIMIT, page, since }));
         if (ids.length === 0) return { items: [], full: false };
         const items = await request(source.name, () => source.search({ limit: LIMIT, page: 1, ids })) ?? [];
+        // back into the order the ids came in, newest update first
         const order = new Map(ids.map((id, i) => [id, i]));
         items.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
         return { items, full: ids.length === LIMIT };
     }
 
+    // newest updates first, page until one's at or before the cursor, then handle them oldest first
     private async pollOrdered(): Promise<number> {
         const field = `${this.source.name}:updated_at`;
         if (this.cursor === null) {
@@ -134,6 +164,7 @@ export class UpdateFeed {
             if (stored) {
                 this.cursor = Number(stored);
             } else {
+                // first run, snapshot the newest page and start from there without publishing anything
                 const { items } = await this.fetch(1);
                 await remember(this.source, items);
                 const times = items.map(item => Date.parse(item.updated_at ?? "")).filter(t => !Number.isNaN(t));
@@ -170,6 +201,8 @@ export class UpdateFeed {
         return published;
     }
 
+    // the newest pages by id, every time. anything changed since its snapshot is an update. it only sees edits to recent
+    // records, older ones get picked up some other way if at all (replacements through post events)
     private async pollWindow(): Promise<number> {
         const items: Array<Item> = [];
         for (let page = 1; page <= this.source.pages; page++) {
@@ -182,6 +215,8 @@ export class UpdateFeed {
         return created.count + await this.handle(items.filter(item => !created.ids.has(item.id)), false);
     }
 
+    // ids above maxId are new, published as createEvent. on the first run it just records the max. ids is what was
+    // published, so they aren't also diffed
     private async publishCreates(items: Array<Item>): Promise<{ count: number; ids: Set<number> }> {
         const ids = new Set<number>();
         const { createEvent } = this.source;
@@ -210,6 +245,11 @@ export class UpdateFeed {
         return { count: ids.size, ids };
     }
 
+    // diffs items (oldest first) against their snapshots and publishes:
+    //  - members.added / members.removed if the member list changed
+    //  - event with `changes` if any tracked field changed
+    //  - event with `changes: null` if there's no snapshot, emitUnknown is on, and it wasn't just created
+    // snapshots are written for new records and anything that changed. private items are dropped & their snapshots deleted
     async handle(all: Array<Item>, emitUnknown: boolean): Promise<number> {
         const { members, resource } = this.source;
         const hidden = this.source.private ? all.filter(item => this.source.private!(item)) : [];
@@ -224,6 +264,7 @@ export class UpdateFeed {
             const after = pick(this.source, item);
             const before = previous.get(item.id) ?? null;
             const changes = before ? diff(before, after, members?.field) : null;
+            // null if there's nothing to compare the members with
             const moved = before && members && members.field in before ? membership(before[members.field], after[members.field]) : null;
             const movedAny = moved !== null && (moved.added.length !== 0 || moved.removed.length !== 0);
             if (!changes || Object.keys(changes).length !== 0 || movedAny) writes.push({ id: item.id, version: versionOf(item), data: after });

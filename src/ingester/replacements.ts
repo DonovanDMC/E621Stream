@@ -9,6 +9,9 @@ export interface PostEvent extends Item { action: string; post_id: number }
 // replacements can't be ordered by updated_at, so older ones are only checked when a post event mentions them
 const feed = new UpdateFeed(UPDATES.find(source => source.name === "post_replacement_updates")!);
 
+// on any replacement_* post event, every replacement on that post is fetched and diffed (post_replacement.update).
+// a replacement_deleted means one is gone, whichever we have a snapshot of that isn't there anymore gets a
+// post_replacement.destroy with its last snapshot
 export async function checkReplacements(event: PostEvent): Promise<number> {
     const replacements = await request("post_replacements for a post", () => e621.postReplacements.search({ post_id: String(event.post_id), limit: 320 }));
     let published = await feed.handle(replacements, true);

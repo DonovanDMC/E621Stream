@@ -1,5 +1,7 @@
 import type { LegacyPost } from "./generated.ts";
 
+// the hand written types for `changes` and post snapshots, these mirror src/ingester/posts.ts on the server
+
 /** A field's old and new value. */
 export interface ValueChange<T> { new: T; old: T }
 export interface SetChange<T> { added: Array<T>; removed: Array<T> }
