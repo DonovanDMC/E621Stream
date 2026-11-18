@@ -175,7 +175,7 @@ ${button("slow/off", {}, "Turn off")}`
 <input class="scale" name="scale" type="number" min="2" max="20" value="${slowPollScale}" required>x slower <button type="submit" class="bad">Turn on slow mode</button>
 </form>`;
     return `<h2>Request times</h2>
-<p class="dim">Elevated once the median reaches ${latencyAlertMS}ms. Slow mode polls every feed slower for when e621 is struggling, without a redeploy. The ingester picks it up within 15 seconds.</p>
+<p class="dim">Elevated once the median reaches ${latencyAlertMS}ms. Slow mode polls every feed slower for when e621 is responding slow, without a redeploy. The ingester picks it up within 15 seconds.</p>
 ${times}
 ${toggle}`;
 }

@@ -84,7 +84,7 @@ export const egressFamily = int("EGRESS_FAMILY", 6) === 4 ? 4 : 6;
 export const pollIntervalScale = int("POLL_INTERVAL_SCALE", 1);
 // how many times slower feeds are polled while nobody's connected and the backfill is still going
 export const idlePollScale = int("IDLE_POLL_SCALE", 10);
-// what the admin page's slow mode form starts at, for when e621 is struggling
+// what the admin page's slow mode form starts at, for when e621 is responding slow
 export const slowPollScale = int("SLOW_POLL_SCALE", 3);
 // request times are elevated when the median over the last 5 minutes is at least this
 export const latencyAlertMS = int("LATENCY_ALERT_MS", 2000);

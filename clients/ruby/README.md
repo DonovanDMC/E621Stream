@@ -30,7 +30,7 @@ Instead of `username:` & `api_key:`, you can pass `token:` with a token from [/a
 
 If the server missed events and goes back for them (a [recovery](https://e621.stream/replaying/#recoveries)), `:recovery` gets the details when it starts and finishes, and the events it sends are `recovered?`. They can be hours old, so don't assume `time` only goes up.
 
-The server can poll e621 slower for a while when it's struggling. `:slow_mode` gets `enabled`, `scale` and `since` when that's turned on or off, and `ready`'s `slow_mode` has it if it's already on. Events just arrive later than usual, nothing's missed.
+The server can poll e621 slower for a while when it's responding slowly. `:slow_mode` gets `enabled`, `scale` and `since` when that's turned on or off, and `ready`'s `slow_mode` has it if it's already on. Events just arrive later than usual, nothing's missed.
 
 It reconnects when the connection drops (`reconnect: false` turns that off), and picks up from `client.cursor`. Pass `cursor:` to replay from an event id or ms timestamp. `url:` is the site (`https://e621.stream`), the websocket url comes from its `/info`, or pass a `ws://`/`wss://` url to connect to it directly. `client.subscribe([...])` changes subscriptions. Private events like `dmail.create` have to be subscribed to by name.
 

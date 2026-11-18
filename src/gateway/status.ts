@@ -309,7 +309,7 @@ ${navHTML(NAV, "/status")}
 <main>
 ${recoveryNotice}
 <h1>E621Stream status</h1>
-${data.ingester.slow_poll_scale === null ? "" : `<p class="run">e621 is struggling, so every feed is polled ${data.ingester.slow_poll_scale}x slower for now.</p>`}
+${data.ingester.slow_poll_scale === null ? "" : `<p class="run">e621 is responding slowly, so every feed is polled ${data.ingester.slow_poll_scale}x slower for now.</p>`}
 <p>${data.ingester.idle ? `Nobody's connected, so feeds are polled ${data.ingester.idle_poll_scale}x slower and the backfill gets the spare requests.` : data.ingester.clients === 0 ? "Nobody's connected, but there's nothing left to backfill, so feeds are polled at full speed." : `${num(data.ingester.clients)} client(s) connected, feeds are polled at full speed.`}</p>
 
 <h2>Events</h2>

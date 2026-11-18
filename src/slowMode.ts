@@ -2,7 +2,7 @@ import { slowModeKey } from "./config.ts";
 import { publishNotice } from "./events.ts";
 import redis from "./redis.ts";
 
-// polling feeds slower while e621 is struggling, turned on & off from the admin page without a redeploy
+// polling feeds slower while e621 is responding slow, turned on & off from the admin page without a redeploy
 // it stacks with POLL_INTERVAL_SCALE and idle. the ingester picks it up in ingester/idle.ts
 // clients get a slow_mode notice when it changes, and the current one in ready
 

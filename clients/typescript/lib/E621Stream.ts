@@ -33,7 +33,7 @@ export interface Recovery {
     to: string;
 }
 
-/** The server is polling e621 slower while it's struggling, so events arrive later than usual. Nothing's missed. */
+/** The server is polling e621 slower while it's responding slow, so events arrive later than usual. Nothing's missed. */
 export interface SlowMode {
     enabled: boolean;
     /** How many times slower than usual, `null` when it's off. */

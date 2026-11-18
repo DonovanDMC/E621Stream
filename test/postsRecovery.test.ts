@@ -62,10 +62,10 @@ test("a posts recovery carries on from its checkpoint", async () => {
         },
     };
 
-    // stopped once the uploads and two pages are done, like a restart
+    // stopped once the uploads, the probe and two pages are done, like a restart
     let stops = 0;
     const stopEarly = async (): Promise<void> => {
-        if (++stops > 3) throw new Error("restart");
+        if (++stops > 4) throw new Error("restart");
     };
     let error: unknown;
     try {

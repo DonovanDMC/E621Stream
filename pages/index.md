@@ -80,7 +80,7 @@ New ops and fields can be added without a version bump, ignore ones you don't kn
 ```
 
 ### Slow mode
-When e621 is struggling we can poll it slower for a while, so events arrive later than usual. Nothing's missed, they're just late. Everyone gets a `slow_mode` op when it's turned on or off:
+When e621 is responding slow we can poll it slower for a while, so events arrive later than usual. Nothing's missed, they're just late. Everyone gets a `slow_mode` op when it's turned on or off:
 
 ```json
 {"op":"slow_mode","id":"1794179689776-0","d":{"enabled":true,"scale":3,"since":"2026-11-18T00:00:00.000Z"}}
