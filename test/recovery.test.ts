@@ -18,3 +18,10 @@ test("recovery notices", () => {
     expect(JSON.parse(noticeFrame(notice as StreamNotice))).toEqual({ op: "recovery", id: "7-0", d });
     expect(parseEntry(["8-0", ["t", "nope", "d", "{}"]])).toBeNull();
 });
+
+test("slow mode notices", () => {
+    const d = { enabled: true, scale: 3, since: "2026-11-18T00:00:00Z" };
+    const notice = parseEntry(["9-0", ["t", "slow_mode", "d", JSON.stringify(d)]]);
+    expect(notice && isNotice(notice)).toBe(true);
+    expect(JSON.parse(noticeFrame(notice as StreamNotice))).toEqual({ op: "slow_mode", id: "9-0", d });
+});

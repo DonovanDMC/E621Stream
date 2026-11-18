@@ -84,7 +84,7 @@ async function run(recovery: Recovery): Promise<void> {
     recovery.status = "running";
     recovery.started_at ??= new Date().toISOString();
     await save();
-    await publishNotice(notice(recovery, false));
+    await publishNotice("recovery", notice(recovery, false));
     try {
         const sent = await alreadySent(from, recovery.sources);
         for (const name of recovery.sources) {
@@ -133,7 +133,7 @@ async function run(recovery: Recovery): Promise<void> {
     }
     recovery.finished_at = new Date().toISOString();
     await saveRecovery(recovery);
-    await publishNotice(notice(recovery, true));
+    await publishNotice("recovery", notice(recovery, true));
     Debug("ingester:recovery", `${recovery.id}: finished, ${recovery.events} event(s)`);
 }
 

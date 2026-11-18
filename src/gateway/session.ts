@@ -20,6 +20,7 @@ import { getSnapshots } from "../db.ts";
 import { dispatchFrame, EVENT_TYPES, isNotice, noticeFrame, parseEntry, type StreamItem } from "../events.ts";
 import { getRecovery, isActive, notice } from "../recovery.ts";
 import redis, { type StreamEntry } from "../redis.ts";
+import { getSlowMode, slowNotice } from "../slowMode.ts";
 
 import { describeCredentials, verify, type Credentials, type E621User } from "./auth.ts";
 import { StreamCompressor, type CompressionType } from "./compression.ts";
@@ -244,13 +245,15 @@ export class Session {
         this.client = typeof d.client === "string" ? d.client.slice(0, 100) : null;
         Debug("gateway:session", `${this.id} identified from ${this.ws.data.ip} (user: ${this.user ? `${this.user.name} #${this.user.id}` : "none"}, client: ${this.client ?? "unknown"}, ${subs.length} subscription(s)${cursor ? `, replaying from ${cursor}` : ""})`);
 
-        const current = await getRecovery().catch(() => null);
+        const [current, slow] = await Promise.all([getRecovery().catch(() => null), getSlowMode().catch(() => null)]);
         if (this.is("closed")) return;
-        // so clients connecting mid recovery know recovered events are coming
+        // so clients connecting mid recovery know recovered events are coming, and ones connecting during slow mode
+        // know why events are late
         const recovery = isActive(current) ? notice(current, false) : null;
+        const slowMode = slow ? slowNotice(slow) : null;
         if (!cursor) {
             this.state = "live";
-            this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: false, recovery } });
+            this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: false, recovery, slow_mode: slowMode } });
             return;
         }
 
@@ -259,7 +262,7 @@ export class Session {
         // a cursor older than the stream's oldest event means some were trimmed, the client is told so in ready
         const [oldest] = await redis.send("XRANGE", [streamKey, "-", "+", "COUNT", "1"]) as Array<StreamEntry>;
         const expired = oldest !== undefined && compareIds(cursor, oldest[0]) < 0;
-        this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: true, cursor_expired: expired, recovery } });
+        this.send({ op: "ready", d: { session_id: this.id, user: this.user, subscriptions: subs.map(s => s.source), replaying: true, cursor_expired: expired, recovery, slow_mode: slowMode } });
         await this.replay(cursor);
     }
 

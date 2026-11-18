@@ -2,7 +2,7 @@ import { TRACKED } from "../ingester/updates.ts";
 
 // the websocket protocol's shapes & parsing. every message both ways is { op, d }. client ops: identify, subscribe,
 // snapshot, heartbeat. server ops: hello, ready, dispatch, replay_complete, subscribed, snapshot, heartbeat_ack,
-// recovery, error. pages/index.md has the full description
+// recovery, slow_mode, error. pages/index.md has the full description
 
 // in /info and hello, bumped for breaking changes
 export const PROTOCOL_VERSION = 1;

@@ -113,6 +113,18 @@ describe("E621Stream", () => {
         client.close();
     });
 
+    test("slow mode is passed on and moves the cursor", async () => {
+        const client = stream().connect();
+        const changes: Array<number | null> = [];
+        client.on("slowMode", mode => changes.push(mode.scale));
+        await tick();
+        FakeSocket.sockets[0]!.receive({ op: "slow_mode", id: "1-0", d: { enabled: true, scale: 3, since: "2026-11-18T00:00:00Z" } });
+        FakeSocket.sockets[0]!.receive({ op: "slow_mode", id: "2-0", d: { enabled: false, scale: null, since: "2026-11-18T01:00:00Z" } });
+        expect(changes).toEqual([3, null]);
+        expect(client.cursor).toBe("2-0");
+        client.close();
+    });
+
     test("reconnects and resumes from the last event", async () => {
         const client = stream().connect();
         const reconnecting: Array<number> = [];

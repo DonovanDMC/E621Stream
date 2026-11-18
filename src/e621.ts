@@ -1,7 +1,7 @@
 import Debug from "@yiffy/debug";
 import E621, { RatelimitError, UnexpectedResponseError, type Options } from "e621";
 
-import { e621AuthKey, e621AuthUser, e621AuthRequestIntervalMS, e621BaseURL, e621PrivateRequestIntervalMS, e621RequestIntervalMS, e621UserAgent, redisPrefix } from "./config.ts";
+import { e621AuthKey, e621AuthRequestIntervalMS, e621AuthUser, e621BaseURL, e621PrivateRequestIntervalMS, e621RequestIntervalMS, e621RequestTimeoutMS, e621UserAgent, redisPrefix } from "./config.ts";
 import { recoveryContext } from "./recovery.ts";
 import redis from "./redis.ts";
 
@@ -22,12 +22,13 @@ export const hasAuth = Boolean(e621AuthUser && e621AuthKey);
 const postFormat = { v1: true } as const;
 
 // the e621 module's own rate limit retrying is off, request() below does it so every queue behaves the same
+// its timeout carries on into reading the body, so one that stalls halfway is given up on too
 export function createClient(auth: Pick<Options, "authKey" | "authToken" | "authUser"> = {}): E621<typeof postFormat> {
     return new E621({
         ...auth,
         baseURL: e621BaseURL,
         userAgent: e621UserAgent,
-        requestTimeout: 30,
+        requestTimeout: e621RequestTimeoutMS / 1000,
         ratelimit: { retry: false },
         defaultPostFormat: postFormat,
     });
@@ -143,8 +144,10 @@ export const authQueue = new RequestQueue(e621AuthRequestIntervalMS, true);
 export const privateQueue = new RequestQueue(e621PrivateRequestIntervalMS, true);
 export const backfillQueue = ingestQueue.background;
 
+// a 2xx error is the connection dropping while the body was read, so it's treated as a network error
 function statusOf(err: unknown): number | null {
-    return err instanceof UnexpectedResponseError ? err.response?.status ?? null : null;
+    const status = err instanceof UnexpectedResponseError ? err.response?.status ?? null : null;
+    return status !== null && status < 300 ? null : status;
 }
 
 // 2s, 4s, 8s... up to a minute, plus up to a second of jitter

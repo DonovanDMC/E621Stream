@@ -2,6 +2,7 @@ import { accessSync, constants, createWriteStream, mkdirSync, readdirSync, rmSyn
 import { join } from "node:path";
 
 import { e621BaseURL, egressProxies, logDir, logEvents, logRetentionDays } from "./config.ts";
+import { recordRequest } from "./latency.ts";
 import { count } from "./metrics.ts";
 
 // three kinds of log file, all `<name>-<yyyy-mm-dd>.log` in LOG_DIR:
@@ -98,25 +99,28 @@ function watchRequests(role: string, log: DailyLog | null): void {
         const route = pickRoute(routes, turn++);
         route.inFlight++;
         const start = performance.now();
-        const line = (result: string): void => {
+        const line = (result: string, failed: boolean): void => {
             const ms = Math.round(performance.now() - start);
             count(`request_ms.${role}`, ms);
             count(`route_ms.${route.name}`, ms);
+            recordRequest(ms, failed);
             log?.write(`${new Date().toISOString()} ${method} ${result} ${ms}ms ${url} ${user} via ${route.name}\n`);
         };
         count(`requests.${role}`);
         count(`route.${route.name}`);
         try {
             // `proxy` is a bun extension to fetch
-            const res = await original(input, route.proxy ? { ...init, proxy: route.proxy } as RequestInit : init);
-            line(String(res.status));
+            const res = await original(input, route.proxy ? { ...init, proxy: route.proxy } : init);
+            line(String(res.status), false);
             if (res.status === 429) count(`ratelimited.${role}`);
             if (res.status >= 400) count(`failed.${role}`);
             return res;
         } catch (err) {
-            // only network errors get here, an http error status still resolves
-            if (route.proxy) route.downUntil = Date.now() + ROUTE_DOWN_MS;
-            line(`failed (${String(err)})`);
+            // only network errors & timeouts (E621_REQUEST_TIMEOUT_MS, from the e621 module) get here, an http error
+            // status still resolves. a timeout is e621 being slow, not the proxy being down
+            const timedOut = err instanceof DOMException && err.name === "TimeoutError";
+            if (route.proxy && !timedOut) route.downUntil = Date.now() + ROUTE_DOWN_MS;
+            line(timedOut ? "timed out" : `failed (${String(err)})`, true);
             count(`failed.${role}`);
             throw err;
         } finally {

@@ -28,9 +28,11 @@ stream.on("error", err => console.error(err));
 stream.connect();
 ```
 
-Listen for an event type with `on("post.create", ...)`, or everything with `on("dispatch", ...)` (check `event.type` to narrow it). The others are `ready`, `replayComplete`, `subscribed`, `recovery`, `reconnecting`, `close` and `error`.
+Listen for an event type with `on("post.create", ...)`, or everything with `on("dispatch", ...)` (check `event.type` to narrow it). The others are `ready`, `replayComplete`, `subscribed`, `recovery`, `slowMode`, `reconnecting`, `close` and `error`.
 
 If the server missed events and goes back for them (a [recovery](https://e621.stream/replaying/#recoveries)), you get `recovery` when it starts and finishes, and the events it sends have `recovered: true`. They can be hours old, so don't assume `time` only goes up. See [Events](https://e621.stream/events/) for what each event is.
+
+When e621 is struggling the server can poll it slower for a while. `slowMode` says when that's turned on or off (and `ready.slow_mode` if it's on when you connect), events just arrive later than usual.
 
 #### Options
 | Option | Type | Default | Description |

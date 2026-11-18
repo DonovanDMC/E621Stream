@@ -4,12 +4,13 @@ import { startBackfill } from "../backfill/runner.ts";
 import { backfillEnabled, disabledSources, feedsKey, gitCommit, pollIntervalScale, retentionHours, redisPrefix, streamKey } from "../config.ts";
 import { migrate } from "../db.ts";
 import { AuthError, hasAuth } from "../e621.ts";
+import { startLatencyWatch } from "../latency.ts";
 import { markTrackingStart } from "../metrics.ts";
 import redis from "../redis.ts";
 
 import { startDataCounts } from "./data.ts";
 import { Feed, FEEDS } from "./feeds.ts";
-import { idleScale, onWake, startIdleWatch } from "./idle.ts";
+import { onWake, pollScale, startIdleWatch } from "./idle.ts";
 import { PostsFeed } from "./posts.ts";
 import { startRecoveryWatch } from "./recovery.ts";
 import { UpdateFeed, UPDATES } from "./updates.ts";
@@ -40,14 +41,14 @@ export interface FeedHealth {
 }
 
 // polls forever. the next poll is scheduled after this one finishes, so a slow poll pushes the next one back instead
-// of piling up. idle slows everything down, waking up (someone connected) polls right away
+// of piling up. idle & slow mode slow everything down, speeding back up (someone connected) polls right away
 function run(feed: Pollable): void {
     const { name, intervalMS } = feed.source;
     const interval = intervalMS * pollIntervalScale;
     const health: FeedHealth = { interval_ms: interval, last_ok_at: null, last_failed_at: null, error: null, published: 0 };
     let timer: ReturnType<typeof setTimeout> | null = null;
     const loop = async (): Promise<void> => {
-        let next = interval * idleScale();
+        let next = interval * pollScale();
         try {
             const count = await feed.poll();
             if (count !== 0) Debug(`ingester:${name}`, `published ${count} event(s)`);
@@ -108,6 +109,7 @@ export async function startIngester(): Promise<void> {
     }
     setInterval(() => void trim().catch((err: unknown) => { Debug("ingester:trim", `failed: ${String(err)}`); }), 60_000);
     startRecoveryWatch();
+    await startLatencyWatch();
     if (backfillEnabled) startBackfill();
     startDataCounts();
 }

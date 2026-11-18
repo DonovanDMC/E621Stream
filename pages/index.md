@@ -65,18 +65,29 @@ New ops and fields can be added without a version bump, ignore ones you don't kn
 | op | payload |
 |---|---|
 | `hello` | `{ version, session_id, identify_timeout_ms, auth_required, compression, events }` |
-| `ready` | `{ session_id, user, subscriptions, replaying, cursor_expired?, recovery }` |
+| `ready` | `{ session_id, user, subscriptions, replaying, cursor_expired?, recovery, slow_mode }` |
 | `dispatch` | `id`, `type`, `time` (when it happened on e621), `recovered` (only when `true`) and `data`, not in `d` |
 | `replay_complete` | `{ events, cursor }` |
 | `subscribed` | `{ subscriptions }` |
 | `snapshot` | `{ resource, nonce, snapshots, done }` |
 | `recovery` | `id` and `d`, see [Recoveries](/replaying/#recoveries) |
+| `slow_mode` | `id` and `d`, see [Slow mode](#slow-mode) |
 | `heartbeat_ack` | `{ cursor }`, the last event you were sent |
 | `error` | `{ code, message }`, right before you're disconnected with that code |
 
 ```json
 {"op":"dispatch","id":"1794179689776-0","type":"post.create","time":"2026-11-08T17:14:26.834-06:00","data":{"post":{"id":6843484}}}
 ```
+
+### Slow mode
+When e621 is struggling we can poll it slower for a while, so events arrive later than usual. Nothing's missed, they're just late. Everyone gets a `slow_mode` op when it's turned on or off:
+
+```json
+{"op":"slow_mode","id":"1794179689776-0","d":{"enabled":true,"scale":3,"since":"2026-11-18T00:00:00.000Z"}}
+{"op":"slow_mode","id":"1794183289776-0","d":{"enabled":false,"scale":null,"since":"2026-11-18T01:00:00.000Z"}}
+```
+
+`scale` is how many times slower than usual. If you connect while it's on, `ready.d.slow_mode` has it, otherwise it's `null`. Like `recovery`, these are on the stream, so a replay gets them in order and their `id` works as a cursor.
 
 ## HTTP
 

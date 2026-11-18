@@ -160,6 +160,17 @@ class ClientTest < Minitest::Test
     assert_equal([true], recovered)
   end
 
+  def test_slow_mode_is_passed_on
+    script = [HELLO, { op: "ready", d: {} }, { op: "slow_mode", id: "1-0", d: { enabled: true, scale: 3, since: "2026-11-18T00:00:00Z" } },
+              { op: "slow_mode", id: "2-0", d: { enabled: false, scale: nil, since: "2026-11-18T01:00:00Z" } }, *fatal,]
+    stream = client(FakeConnector.new(script))
+    scales = []
+    stream.on(:slow_mode) { |mode| scales << mode["scale"] }
+    stream.run
+    assert_equal([3, nil], scales)
+    assert_equal("2-0", stream.cursor)
+  end
+
   def test_snapshots_get_their_reply
     first = { op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { "1" => { "id" => 1, "rating" => "s" } }, done: false } }
     rest = { op: "snapshot", d: { resource: "post", nonce: "1", snapshots: { "2" => nil }, done: true } }

@@ -3,6 +3,8 @@ import { count } from "./metrics.ts";
 import { recoveryContext, type RecoveryNotice } from "./recovery.ts";
 import redis, { fieldsToObject, type StreamEntry } from "./redis.ts";
 
+import type { SlowModeNotice } from "./slowMode.ts";
+
 // event types and the redis stream they go through. the ingester publishes, gateway/hub.ts reads them back and every
 // session gets the ones its subscriptions match
 
@@ -185,10 +187,20 @@ export interface StreamEvent {
     type: EventType;
 }
 
-// recovery start/end markers, they go on the stream so they're in order with the events and get replayed
+// notices go to every client whatever they're subscribed to, as their own op. they go on the stream so they're in
+// order with the events and get replayed
+//  - recovery: a recovery started or finished (recovery.ts)
+//  - slow_mode: slow mode was turned on or off from the admin page (slowMode.ts)
+interface NoticeData {
+    recovery: RecoveryNotice;
+    slow_mode: SlowModeNotice;
+}
+export type NoticeType = keyof NoticeData;
+const NOTICE_TYPES = new Set<string>(["recovery", "slow_mode"] satisfies Array<NoticeType>);
+
 export interface StreamNotice {
     id: string;
-    notice: "recovery";
+    notice: NoticeType;
     raw: string;
 }
 
@@ -206,15 +218,15 @@ export async function publish(type: EventType, time: string, data: unknown): Pro
     return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", type, "ts", time, "d", JSON.stringify(data), ...recovery ? ["r", recovery] : []]) as Promise<string>;
 }
 
-export async function publishNotice(notice: RecoveryNotice): Promise<string> {
-    return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", "recovery", "d", JSON.stringify(notice)]) as Promise<string>;
+export async function publishNotice<T extends NoticeType>(type: T, notice: NoticeData[T]): Promise<string> {
+    return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", type, "d", JSON.stringify(notice)]) as Promise<string>;
 }
 
 // null for anything malformed or with a type that's since been removed, those are skipped
 export function parseEntry([id, fields]: StreamEntry): StreamItem | null {
     const { t, ts, d, r } = fieldsToObject(fields);
     if (d === undefined) return null;
-    if (t === "recovery") return { id, notice: "recovery", raw: d };
+    if (t !== undefined && NOTICE_TYPES.has(t)) return { id, notice: t as NoticeType, raw: d };
     if (!t || !isEventType(t)) return null;
     return { id, type: t, time: ts ?? "", data: JSON.parse(d) as Record<string, unknown>, raw: d, recovered: r !== undefined };
 }
@@ -224,7 +236,7 @@ export function dispatchFrame(event: StreamEvent): string {
     return `{"op":"dispatch","id":${JSON.stringify(event.id)},"type":"${event.type}","time":${JSON.stringify(event.time)},${event.recovered ? "\"recovered\":true," : ""}"data":${event.raw}}`;
 }
 
-// a recovery start/end, d is a RecoveryNotice
+// the op is the notice type, d is its NoticeData
 export function noticeFrame(notice: StreamNotice): string {
-    return `{"op":"recovery","id":${JSON.stringify(notice.id)},"d":${notice.raw}}`;
+    return `{"op":"${notice.notice}","id":${JSON.stringify(notice.id)},"d":${notice.raw}}`;
 }

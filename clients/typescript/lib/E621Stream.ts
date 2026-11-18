@@ -33,6 +33,15 @@ export interface Recovery {
     to: string;
 }
 
+/** The server is polling e621 slower while it's struggling, so events arrive later than usual. Nothing's missed. */
+export interface SlowMode {
+    enabled: boolean;
+    /** How many times slower than usual, `null` when it's off. */
+    scale: number | null;
+    /** When it was turned on or off. */
+    since: string;
+}
+
 export interface Ready {
     /** If the cursor was older than anything still kept. */
     cursor_expired?: boolean;
@@ -40,6 +49,8 @@ export interface Ready {
     recovery?: Recovery | null;
     replaying: boolean;
     session_id: string;
+    /** Slow mode, if it's on. Older servers don't send this. */
+    slow_mode?: SlowMode | null;
     subscriptions: Array<Subscription>;
     user: { id: number; level: number; level_string: string; name: string } | null;
 }
@@ -62,6 +73,8 @@ export interface ClientEvents {
     /** A recovery started or finished, events from it have `recovered: true`. */
     recovery: [Recovery];
     replayComplete: [{ cursor: string | null; events: number }];
+    /** Slow mode was turned on or off. */
+    slowMode: [SlowMode];
     subscribed: [Array<Subscription>];
 }
 
@@ -166,6 +179,11 @@ export class E621Stream extends Emitter<Listeners> {
                 // these are on the stream too, so they move the cursor
                 if (message.id) this.cursor = message.id;
                 this.emit("recovery", message.d as Recovery);
+                break;
+            }
+            case "slow_mode": {
+                if (message.id) this.cursor = message.id;
+                this.emit("slowMode", message.d as SlowMode);
                 break;
             }
             case "replay_complete": {

@@ -47,6 +47,10 @@ export const idleKey = `${redisPrefix}:ingester:idle`;
 export const dataKey = `${redisPrefix}:data`;
 // the current (or last) Recovery json, there's only ever one
 export const recoveryKey = `${redisPrefix}:recovery`;
+// SlowMode json while slow mode is on from the admin page, missing otherwise
+export const slowModeKey = `${redisPrefix}:ingester:slow`;
+// Latency json, whether e621's request times are elevated right now
+export const latencyKey = `${redisPrefix}:ingester:latency`;
 // postgres holds snapshots (the last known state of records) and the backfill/oauth tables
 export const databaseURL = Bun.env.DATABASE_URL ?? "postgres://e621stream:e621stream@postgres:5432/e621stream";
 
@@ -64,6 +68,8 @@ export const e621RequestIntervalMS = int("E621_REQUEST_INTERVAL_MS", 550);
 export const e621AuthRequestIntervalMS = int("E621_AUTH_REQUEST_INTERVAL_MS", 1000);
 // polling private events (dmails, private sets) with each user's credentials
 export const e621PrivateRequestIntervalMS = int("E621_PRIVATE_REQUEST_INTERVAL_MS", 1000);
+// a request (body included) that takes longer than this is given up on, and retried like a network error
+export const e621RequestTimeoutMS = int("E621_REQUEST_TIMEOUT_MS", 10_000);
 // how often each user's private events are polled
 export const privatePollIntervalMS = int("PRIVATE_POLL_INTERVAL_MS", 60_000);
 // fill the snapshots table from e621's db exports & crawling, so update events have something to diff against
@@ -78,6 +84,12 @@ export const egressFamily = int("EGRESS_FAMILY", 6) === 4 ? 4 : 6;
 export const pollIntervalScale = int("POLL_INTERVAL_SCALE", 1);
 // how many times slower feeds are polled while nobody's connected and the backfill is still going
 export const idlePollScale = int("IDLE_POLL_SCALE", 10);
+// what the admin page's slow mode form starts at, for when e621 is struggling
+export const slowPollScale = int("SLOW_POLL_SCALE", 3);
+// request times are elevated when the median over the last 5 minutes is at least this
+export const latencyAlertMS = int("LATENCY_ALERT_MS", 2000);
+// posted to when request times are elevated and when they recover, empty turns it off
+export const discordWebhookURL = Bun.env.DISCORD_WEBHOOK_URL?.trim() ? Bun.env.DISCORD_WEBHOOK_URL.trim() : null;
 
 // daily log files, empty LOG_DIR turns them off
 export const logDir = Bun.env.LOG_DIR ?? "logs";

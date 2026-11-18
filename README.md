@@ -53,6 +53,8 @@ e621's limit is 2 requests a second. Requests start `E621_REQUEST_INTERVAL_MS` (
 
 While nobody's connected and there's still backfill left, feeds are polled `IDLE_POLL_SCALE` (10) times slower so the backfill can have the requests.
 
+Requests that take longer than `E621_REQUEST_TIMEOUT_MS` (10s), body included, are given up on and retried. When e621 is struggling, slow mode on the admin page polls every feed slower (`SLOW_POLL_SCALE`, 3x by default) without a redeploy. If `DISCORD_WEBHOOK_URL` is set, it's posted to when the median request time over 5 minutes reaches `LATENCY_ALERT_MS` (2000ms), and again once it's been back under for 3 minutes.
+
 ### Egress
 e621 seems to handle requests from each ip one at a time, so a slow request holds up the next one. If the server has spare addresses, `ROLE=egress` runs a proxy that can only connect to e621 (over `EGRESS_FAMILY`, 6 by default), and `E621_EGRESS_PROXIES` lists them (`http://egress-1:8080,http://egress-2:8080`). Requests go through whichever has the least going on, and only go direct if none are working. This doesn't change the rate, just how long requests spend waiting. The docker network decides which address a proxy uses (`com.docker.network.host_ipv6`).
 

@@ -1,10 +1,12 @@
 import Debug from "@yiffy/debug";
 
-import { adminUserIDs, clientListKey, oauthEnabled, redisPrefix, retentionHours } from "../config.ts";
+import { adminUserIDs, clientListKey, latencyAlertMS, oauthEnabled, redisPrefix, retentionHours, slowPollScale } from "../config.ts";
 import { RECOVERABLE } from "../ingester/recovery.ts";
+import { getLatency, type Latency } from "../latency.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
 import { cancelRecovery, getRecovery, isActive, requestRecovery, type Recovery } from "../recovery.ts";
 import redis from "../redis.ts";
+import { clearSlowMode, getSlowMode, setSlowMode, type SlowMode } from "../slowMode.ts";
 
 import { createSession, sessionCookie, sessionKey, sessionToken, type Admin } from "./adminSession.ts";
 import { verify } from "./auth.ts";
@@ -15,7 +17,7 @@ import { PAGE_CSS } from "./status.ts";
 import type { ListedClient } from "./presence.ts";
 
 // /admin, for whoever's in ADMIN_USER_IDS. lists every client on every gateway (from presence.ts), drops & bans them
-// (moderation.ts), and starts/cancels recoveries. login is with an e621 api key, or oauth when that's set up
+// (moderation.ts), turns slow mode on & off (../slowMode.ts), and starts/cancels recoveries. login is with an e621 api key, or oauth when that's set up
 // it's all plain post forms, most redirect back to /admin when they're done
 
 // password style logins an ip gets per window
@@ -64,6 +66,7 @@ ${PAGE_CSS}
 ${NAV_CSS}
 form.stack { display: grid; gap: 10px; max-width: 320px; }
 form.inline { display: inline; }
+input.scale { width: 4em; }
 input { padding: 6px 8px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font: inherit; }
 button { padding: 4px 10px; background: var(--surface); color: var(--heading); border: 1px solid var(--border); border-radius: 4px; font: inherit; cursor: pointer; }
 button.bad { color: var(--bad); }
@@ -160,9 +163,26 @@ ${RECOVERABLE.map(name => `<label><input type="checkbox" name="source" value="${
 </form>`;
 }
 
+// how e621's request times look (../latency.ts), and the slow mode toggle
+function slowSection(latency: Latency | null, mode: SlowMode | null): string {
+    const times = latency
+        ? `<p>Median <span class="${latency.elevated ? "bad" : "ok"}">${latency.p50}ms</span>, p90 ${latency.p90}ms over the 5 minutes before <span title="${esc(latency.checked_at)}">${ago(latency.checked_at)}</span> (${latency.requests} requests, ${latency.failed} failed). ${latency.elevated ? `<span class="bad">Elevated</span> since` : "Normal since"} <span title="${esc(latency.since)}">${ago(latency.since)}</span>.</p>`
+        : "<p class=\"dim\">Not checked yet.</p>";
+    const toggle = mode
+        ? `<p><span class="run">Slow mode is on</span>, feeds are polled ${mode.scale}x slower. Turned on by ${esc(mode.by)} <span title="${esc(mode.at)}">${ago(mode.at)}</span>.</p>
+${button("slow/off", {}, "Turn off")}`
+        : `<form method="post" action="/admin/slow">
+<input class="scale" name="scale" type="number" min="2" max="20" value="${slowPollScale}" required>x slower <button type="submit" class="bad">Turn on slow mode</button>
+</form>`;
+    return `<h2>Request times</h2>
+<p class="dim">Elevated once the median reaches ${latencyAlertMS}ms. Slow mode polls every feed slower for when e621 is struggling, without a redeploy. The ingester picks it up within 15 seconds.</p>
+${times}
+${toggle}`;
+}
+
 // notice is shown at the top, it's how form errors come back too
 async function adminPage(admin: Admin, notice?: string): Promise<Response> {
-    const [lists, bans, recovery] = await Promise.all([redis.send("HVALS", [clientListKey]) as Promise<Array<string>>, listBans(), getRecovery()]);
+    const [lists, bans, recovery, latency, mode] = await Promise.all([redis.send("HVALS", [clientListKey]) as Promise<Array<string>>, listBans(), getRecovery(), getLatency(), getSlowMode()]);
     const clients = lists.flatMap(list => JSON.parse(list) as Array<ListedClient>).sort((a, b) => a.connected_at.localeCompare(b.connected_at));
     const clientRows = clients.map(c => `<tr><td>${c.client ? esc(c.client) : "<span class=\"dim\">unnamed</span>"}</td>
 <td>${c.user ? `<a href="https://e621.net/users/${c.user_id}">${esc(c.user)}</a>` : "<span class=\"dim\">anonymous</span>"}</td>
@@ -190,6 +210,8 @@ ${banRows ? `<div class="table-wrap"><table>
 <tr><th>user</th><th>reason</th><th>by</th><th>banned</th><th></th></tr>
 ${banRows}
 </table></div>` : "<p>Nobody's banned.</p>"}
+
+${slowSection(latency, mode)}
 
 <h2>Recovery</h2>
 <p class="dim">Re-fetches a window of time the ingester missed, and sends what wasn't sent the first time as <code>recovered</code> events. Pick only the sources that actually missed things, the id based ones can only tell what was sent from the last ${retentionHours}h of the stream.</p>
@@ -265,6 +287,18 @@ async function action(req: Request, admin: Admin, name: string): Promise<Respons
         }
         case "recovery/cancel": {
             if (await cancelRecovery()) Debug("gateway:admin", `${admin.name} cancelled the recovery`);
+            return redirect();
+        }
+        case "slow": {
+            const scale = Number(body.get("scale"));
+            if (!Number.isInteger(scale) || scale < 2 || scale > 20) return adminPage(admin, "slow mode has to be 2-20x");
+            await setSlowMode(scale, admin.name);
+            Debug("gateway:admin", `${admin.name} turned on slow mode (${scale}x)`);
+            return redirect();
+        }
+        case "slow/off": {
+            await clearSlowMode();
+            Debug("gateway:admin", `${admin.name} turned off slow mode`);
             return redirect();
         }
         case "unban": {

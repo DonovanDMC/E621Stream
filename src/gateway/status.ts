@@ -4,6 +4,7 @@ import { recent, totals, trackingSince, type Counts } from "../metrics.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
 import { getRecovery, isActive, type Recovery } from "../recovery.ts";
 import redis from "../redis.ts";
+import { getSlowMode } from "../slowMode.ts";
 
 import { hubStats } from "./hub.ts";
 import { sessions } from "./session.ts";
@@ -91,7 +92,7 @@ function backfillProgress(state: BackfillState): Backfill {
 }
 
 async function build(): Promise<Record<string, unknown>> {
-    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors, ingesterCommit, since, recovery] = await Promise.all([
+    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors, ingesterCommit, since, recovery, slow] = await Promise.all([
         recent("minute", 60),
         recent("hour", 24),
         totals(),
@@ -107,6 +108,7 @@ async function build(): Promise<Record<string, unknown>> {
         redis.get(`${redisPrefix}:ingester:commit`),
         trackingSince(),
         getRecovery(),
+        getSlowMode(),
     ]);
     const feeds = Object.entries(feedHealth ?? {}).map(([name, health]) => ({ name, ...JSON.parse(health) as FeedHealth })).sort((a, b) => a.name.localeCompare(b.name));
     const hour = add(minutes.map(m => m.counts)), day = add(hours.map(h => h.counts));
@@ -123,7 +125,7 @@ async function build(): Promise<Record<string, unknown>> {
     return {
         generated_at: new Date().toISOString(),
         tracking_since: since,
-        ingester: { started_at: startedAt, idle: idle === "true", idle_poll_scale: idlePollScale, clients, commit: ingesterCommit },
+        ingester: { started_at: startedAt, idle: idle === "true", idle_poll_scale: idlePollScale, slow_poll_scale: slow?.scale ?? null, clients, commit: ingesterCommit },
         gateway_commit: gitCommit,
         requests: {
             per_second_last_hour: Math.round(requestsOf(hour) / 3600 * 100) / 100,
@@ -244,7 +246,7 @@ export async function statusPage(): Promise<string> {
         gateway: { connections: number };
         gateway_commit: string;
         generated_at: string;
-        ingester: { clients: number; commit: string | null; idle: boolean; idle_poll_scale: number; started_at: string | null };
+        ingester: { clients: number; commit: string | null; idle: boolean; idle_poll_scale: number; slow_poll_scale: number | null; started_at: string | null };
         recovery: (Recovery & { active: boolean }) | null;
         requests: { avg_ms: Record<string, number | null>; by_role: Record<string, { last_24h: Record<string, number | null>; last_hour: Record<string, number | null> }>; by_route: Record<string, { last_24h: { avg_ms: number | null; requests: number }; last_hour: { avg_ms: number | null; requests: number } }>; failed: Counts; last_24h: number; last_hour: number; per_minute: Array<{ avg_ms: number | null; failed: number; requests: number }>; per_second_last_hour: number; ratelimited: Counts; total: number };
         tracking_since: string | null;
@@ -307,6 +309,7 @@ ${navHTML(NAV, "/status")}
 <main>
 ${recoveryNotice}
 <h1>E621Stream status</h1>
+${data.ingester.slow_poll_scale === null ? "" : `<p class="run">e621 is struggling, so every feed is polled ${data.ingester.slow_poll_scale}x slower for now.</p>`}
 <p>${data.ingester.idle ? `Nobody's connected, so feeds are polled ${data.ingester.idle_poll_scale}x slower and the backfill gets the spare requests.` : data.ingester.clients === 0 ? "Nobody's connected, but there's nothing left to backfill, so feeds are polled at full speed." : `${num(data.ingester.clients)} client(s) connected, feeds are polled at full speed.`}</p>
 
 <h2>Events</h2>

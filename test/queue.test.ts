@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { UnexpectedResponseError } from "e621";
 
 import { RequestQueue } from "../src/e621.ts";
+
+// postsRecovery.test.ts mocks request() and bun's module mocks carry over to other files, the query gets a separate copy
+const unmocked = "../src/e621.ts?unmocked";
+const { request } = await import(unmocked) as typeof import("../src/e621.ts");
 
 describe("RequestQueue", () => {
     test("spaces request starts out", async () => {
@@ -51,5 +56,30 @@ describe("RequestQueue", () => {
     test("errors reach the caller", async () => {
         const queue = new RequestQueue(1);
         expect(queue.schedule(() => Promise.reject(new Error("nope")))).rejects.toThrow("nope");
+    });
+});
+
+describe("request", () => {
+    const failing = (status: number): UnexpectedResponseError => new UnexpectedResponseError(new Request("https://e621.net/posts.json"), new Response(null, { status }), "The socket connection was closed unexpectedly");
+
+    test("retries a 200 whose body didn't make it", async () => {
+        let calls = 0;
+        const result = await request("test", async () => {
+            if (++calls === 1) throw failing(200);
+            return "ok";
+        }, new RequestQueue(1));
+        expect(result).toBe("ok");
+        expect(calls).toBe(2);
+    });
+
+    test("doesn't retry a 404", async () => {
+        let calls = 0;
+        const run = request("test", () => {
+            calls++;
+            return Promise.reject(failing(404));
+        }, new RequestQueue(1));
+        expect(run).rejects.toBeInstanceOf(UnexpectedResponseError);
+        await run.catch(() => null);
+        expect(calls).toBe(1);
     });
 });
