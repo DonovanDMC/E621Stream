@@ -9,13 +9,6 @@ import redis from "../redis.ts";
 
 import type { Checkpoint } from "./recovery.ts";
 
-// posts. they're searched by `order:updated` and every one is compared against its snapshot:
-//  - no snapshot and new enough: post.create
-//  - change_seq moved: post.update, with what changed (change_seq only moves for real edits)
-//  - score/favs/comments moved: post.stats (these bump updated_at but not change_seq)
-// the cursor is the newest updated_at seen, in ms
-
-// the parts of an e621 post (v1 format) that are used
 export interface Post {
     approver_id: number | null;
     change_seq: number;
@@ -43,9 +36,6 @@ export interface PostScore { down: number; total: number; up: number }
 
 export interface PostStats { comment_count: number; fav_count: number; score: PostScore }
 
-// what's stored for each post, only what diff() looks at
-// the full post is ~3x larger
-// stats are optional, snapshots from before they were stored don't have them
 export interface Snapshot extends Partial<PostStats> {
     approver_id: number | null;
     change_seq: number;
@@ -62,23 +52,16 @@ export interface Snapshot extends Partial<PostStats> {
     tags: Record<string, Array<string>>;
 }
 
-// `changes` in post.update & post.stats. scalars are old/new, lists are added/removed
 export type Changes = Record<string, { new: unknown; old: unknown } | { added: Array<unknown>; removed: Array<unknown> }>;
 
 const LIMIT = 320;
 const MAX_PAGES_PER_POLL = 20;
-// a post without a snapshot that was uploaded this recently is new, older ones are just ones we never had
 const NEW_POST_WINDOW_MS = 15 * 60 * 1000;
-// cursor fields
 const UPDATED_FIELD = "posts:updated_at";
 // order:updated isn't quite in order, the furthest out seen was about 19 seconds
 const OVERLAP_MS = 30_000;
-// the highest post id seen, anything above it is a new upload
 const MAX_ID_FIELD = "posts:max_id";
-// e621 won't go past this page of numbered results
 const MAX_PAGE = 750;
-// a range is checked at this page before going through it, the gap to MAX_PAGE is room for posts shifting down while
-// paging (every update during the crawl pushes the rest back one)
 const PROBE_PAGE = 600;
 const MAX_POST_ID = 2_147_483_647;
 
@@ -108,7 +91,6 @@ export function snapshot(post: Post): Snapshot {
     };
 }
 
-// null when the snapshot doesn't have stats to compare with, {} when nothing changed
 export function statsDiff(before: Partial<PostStats>, after: PostStats): Changes | null {
     if (!before.score || before.fav_count === undefined || before.comment_count === undefined) return null;
     const changes: Changes = {};
@@ -124,7 +106,6 @@ function setDiff<T>(before: Array<T>, after: Array<T>): { added: Array<T>; remov
     return added.length === 0 && removed.length === 0 ? null : { added, removed };
 }
 
-// what changed between two snapshots. fields the old snapshot doesn't have are skipped, not reported as added
 export function diff(before: Partial<Snapshot>, after: Snapshot): Changes {
     const changes: Changes = {};
     const scalar = (key: keyof Snapshot): void => {
@@ -135,7 +116,6 @@ export function diff(before: Partial<Snapshot>, after: Snapshot): Changes {
         if (d) changes[key] = d;
     };
 
-    // per category so moving a tag between categories (e.g. general -> artist) shows up
     if (before.tags) {
         for (const category of new Set([...Object.keys(before.tags), ...Object.keys(after.tags)])) {
             set(`tags.${category}`, before.tags[category] ?? [], after.tags[category] ?? []);
@@ -145,7 +125,6 @@ export function diff(before: Partial<Snapshot>, after: Snapshot): Changes {
         if (before[key]) set(key, before[key] as Array<unknown>, after[key] as Array<unknown>);
     }
     for (const key of ["rating", "description", "md5", "parent_id", "approver_id", "has_notes"] as const) scalar(key);
-    // flags.deleted, flags.pending etc. each on their own
     if (before.flags) {
         for (const flag of new Set([...Object.keys(before.flags), ...Object.keys(after.flags)])) {
             if (before.flags[flag] !== after.flags[flag]) changes[`flags.${flag}`] = { old: before.flags[flag], new: after.flags[flag] };
@@ -154,28 +133,20 @@ export function diff(before: Partial<Snapshot>, after: Snapshot): Changes {
     return changes;
 }
 
-/** where a posts recovery got to */
 export interface PostsCheckpoint {
     events: number;
-    /** the next page of the current range */
     page: number;
-    /** id ranges still to go through, the first is the current one */
     ranges: Array<[number, number]>;
-    /** how far back the current range has gotten, by updated_at */
     reached: string | null;
-    /** the highest post id when it started, the ranges split up 1 to this */
     total: number;
-    /** whether recoverUploads is done */
     uploads: boolean;
 }
 
 export class PostsFeed {
-    // the newest updated_at seen, in ms
     private cursor: number | null = null;
     private maxId = 0;
     readonly source = { name: "posts", intervalMS: 5000 } as const;
 
-    // the stored cursors, or on the first run the newest updated_at & id so it starts from now
     private async init(): Promise<number> {
         const [updated, maxId] = await redis.hmget(cursorKey, [UPDATED_FIELD, MAX_ID_FIELD]);
         if (updated && maxId) {
@@ -196,9 +167,6 @@ export class PostsFeed {
         return this.cursor;
     }
 
-    // compares posts against their snapshots, publishing whatever changed
-    // isNewPost decides post.create vs post.update for posts without a snapshot, live and recoveries decide differently
-    // events go out oldest update first, snapshots are only written when something in them changed
     private async process(found: Array<Post>, isNewPost: (post: Post, before: Snapshot | null) => boolean): Promise<number> {
         if (found.length === 0) return 0;
         const posts = found.toSorted((a, b) => Date.parse(a.updated_at) - Date.parse(b.updated_at));
@@ -213,7 +181,6 @@ export class PostsFeed {
                 await publish("post.create", post.created_at, { post });
                 published++;
             } else if (before?.change_seq !== post.change_seq) {
-                // changes is null for a post we never had a snapshot of
                 await publish("post.update", post.updated_at, { post, changes: before ? diff(before, snap) : null });
                 published++;
             }
@@ -228,9 +195,6 @@ export class PostsFeed {
         return published;
     }
 
-    // uploads from the window that have been touched since (a vote is enough) are past `to` by updated_at, the live
-    // feed already sent those as updates since they weren't new to it
-    // so these go through every post by id, newest first, back to the window's start
     private async recoverUploads(from: number, to: number, created: Set<number>, stop: () => Promise<void>): Promise<number> {
         const uploads: Array<Post> = [];
         for (let before = MAX_POST_ID; ;) {
@@ -245,7 +209,6 @@ export class PostsFeed {
             before = oldest.id;
         }
         uploads.reverse();
-        // only posts without a snapshot get one, the rest are already being kept up to date
         const previous = await getSnapshots("post", uploads.map(post => post.id));
         for (const post of uploads) await publish("post.create", post.created_at, { post });
         await putSnapshots("post", uploads.filter(post => !previous.has(post.id)).map(post => ({ id: post.id, version: post.change_seq, data: snapshot(post) })));
@@ -254,7 +217,6 @@ export class PostsFeed {
 
     async poll(): Promise<number> {
         let cursor = this.cursor ?? await this.init();
-        // a recovery going back over what we're behind on sends it anyway, so there's no catching up to do
         const recovery = await getRecovery();
         if (isActive(recovery) && recovery.sources.includes("posts") && Date.parse(recovery.from) <= cursor && Date.parse(recovery.to) > cursor) {
             Debug("ingester:posts", `recovery ${recovery.id} covers up to ${recovery.to}, skipping ahead`);
@@ -269,14 +231,12 @@ export class PostsFeed {
         let newest = cursor, published = 0, caughtUp = false;
         for (let page = 1; page <= MAX_PAGES_PER_POLL && !caughtUp; page++) {
             const posts = await search("order:updated status:any", LIMIT, page);
-            // posts shift down a page when others are updated while paging, the first copy is never older
             const fresh = posts.filter(post => Date.parse(post.updated_at) > since && !seen.has(post.id));
             for (const post of fresh) {
                 seen.add(post.id);
                 newest = Math.max(newest, Date.parse(post.updated_at));
             }
             // uploads can commit out of id order
-            // so a post is new if it has no snapshot and is either above the max id or was uploaded recently
             published += await this.process(fresh, (post, before) => {
                 const isNew = !before && (post.id > this.maxId || Date.now() - Date.parse(post.created_at) < NEW_POST_WINDOW_MS);
                 if (isNew && post.id > this.maxId) this.maxId = post.id;
@@ -293,26 +253,19 @@ export class PostsFeed {
         return published;
     }
 
-    // goes through every post updated between from and to. snapshots make anything already sent a no-op. there's only
-    // MAX_PAGE pages of any search, a range of ids that has more updates than that is split in half
-    // created is the posts that already have a post.create on the stream
-    // its spot is saved after every page, so a restart carries on from there instead of starting over
     async recover(from: number, to: number, created: Set<number>, stop: () => Promise<void>, checkpoint: Checkpoint<PostsCheckpoint>): Promise<number> {
         let state = checkpoint.state;
         if (!state) {
-            // one range covering every post id to start with
             const [newest] = await search("status:any", 1, 1);
             if (!newest) return 0;
             state = { uploads: false, ranges: [[1, newest.id]], page: 1, reached: null, total: newest.id, events: 0 };
         } else {
             Debug("ingester:posts", `recovery: resuming ${state.ranges.length} range(s) at page ${state.page} of ${state.ranges[0]?.join("..") ?? "none"}`);
         }
-        // saves the checkpoint along with a description & rough progress for the status page
         const save = async (s: PostsCheckpoint): Promise<void> => {
             const [range] = s.ranges;
             const detail = !s.uploads ? "uploads" : !range ? "finishing"
                 : `ids ${range[0]}..${range[1]}${s.ranges.length > 1 ? ` (${s.ranges.length - 1} more after)` : ""}, page ${s.page}${s.reached ? `, back to ${s.reached}` : ""}`;
-            // ids in ranges that are done, plus how far back in the window the current range has gotten
             const left = s.ranges.reduce((total, [lo, hi]) => total + hi - lo + 1, 0);
             const current = range && s.reached ? (range[1] - range[0] + 1) * (to - Date.parse(s.reached)) / (to - from) : 0;
             const fraction = s.uploads ? Math.min(1, Math.max(0, (s.total - left + current) / s.total)) : 0;
@@ -325,11 +278,8 @@ export class PostsFeed {
             await save(state);
         }
 
-        // the first range is the one being gone through, splitting it puts both halves first so the order is the same
         while (state.ranges.length !== 0) {
             const [lo, hi] = state.ranges[0]!;
-            // a range with more than PROBE_PAGE pages of updates is split before going through it, instead of after
-            // 750 pages that the halves go back over anyway
             if (state.page === 1 && lo !== hi) {
                 await stop();
                 const probe = await search(`order:updated status:any id:${lo}..${hi}`, LIMIT, PROBE_PAGE);
@@ -346,18 +296,15 @@ export class PostsFeed {
             for (; state.page <= MAX_PAGE && !finished; state.page++) {
                 await stop();
                 const posts = await search(`order:updated status:any id:${lo}..${hi}`, LIMIT, state.page);
-                // a recovery has no max id to go by, a post without a snapshot is new if it was uploaded in the window
                 state.events += await this.process(posts.filter((post) => {
                     const at = Date.parse(post.updated_at);
                     return at > from && at <= to;
                 }), (post, before) => !before && Date.parse(post.created_at) >= from);
                 const oldest = posts.at(-1);
                 finished = posts.length < LIMIT || !oldest || Date.parse(oldest.updated_at) <= from;
-                // kept inside the window, the first pages are posts updated after it
                 if (oldest) state.reached = new Date(Math.min(to, Math.max(from, Date.parse(oldest.updated_at)))).toISOString();
                 await save({ ...state, page: state.page + 1 });
             }
-            // done with this range, or it hit MAX_PAGE and gets split
             if (finished || lo === hi) {
                 if (!finished) Debug("ingester:posts", `post ${lo} has more than ${MAX_PAGE} pages of updates, somehow`);
                 state.ranges.shift();

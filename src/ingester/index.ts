@@ -15,23 +15,13 @@ import { PostsFeed } from "./posts.ts";
 import { startRecoveryWatch } from "./recovery.ts";
 import { UpdateFeed, UPDATES } from "./updates.ts";
 
-// the ingester. there should only ever be one running. it polls e621 and publishes events, there's three kinds of feed:
-//  - PostsFeed (posts.ts): posts by updated_at, diffed against snapshots for post.create/update/stats
-//  - Feed (feeds.ts): anything by id, every new id is a .create (plus whatever's derived from it)
-//  - UpdateFeed (updates.ts): records by updated_at (or a rescanned window), diffed against snapshots for .update
-// each feed polls on its own timer, the request queue in e621.ts keeps all of them under the rate limit together
-// it also trims the stream, runs recoveries and the backfill, and counts snapshots for the status page
-
-// anything with a name & interval that can be polled. poll returns how many events it published
 interface Pollable {
     source: { intervalMS: number; name: string };
     poll(): Promise<number>;
 }
 
-// a feed the ingester's account isn't allowed to see is tried again after this
 const AUTH_RETRY_MS = 60 * 60 * 1000;
 
-// stored in feedsKey for the status page
 export interface FeedHealth {
     error: string | null;
     interval_ms: number;
@@ -40,8 +30,6 @@ export interface FeedHealth {
     published: number;
 }
 
-// polls forever. the next poll is scheduled after this one finishes, so a slow poll pushes the next one back instead
-// of piling up. idle & slow mode slow everything down, speeding back up (someone connected) polls right away
 function run(feed: Pollable): void {
     const { name, intervalMS } = feed.source;
     const interval = intervalMS * pollIntervalScale;
@@ -73,7 +61,6 @@ function run(feed: Pollable): void {
         }, next);
     };
     onWake(() => {
-        // no timer means it's polling right now. feeds waiting out an auth error keep waiting
         if (!timer || health.interval_ms === AUTH_RETRY_MS) return;
         clearTimeout(timer);
         timer = null;
@@ -82,9 +69,7 @@ function run(feed: Pollable): void {
     void loop();
 }
 
-// drops events older than RETENTION_HOURS, they can't be replayed after this
 async function trim(): Promise<void> {
-    // stream ids start with a timestamp
     const minId = `${Date.now() - retentionHours * 60 * 60 * 1000}-0`;
     const removed = await redis.send("XTRIM", [streamKey, "MINID", "~", minId]) as number;
     if (removed !== 0) Debug("ingester:trim", `removed ${removed} expired event(s)`);
@@ -93,7 +78,6 @@ async function trim(): Promise<void> {
 export async function startIngester(): Promise<void> {
     if (!hasAuth) throw new Error("E621_AUTH_USER and E621_AUTH_KEY are required for the ingester");
     await migrate();
-    // health from the last run would show disabled/removed feeds as still around
     await redis.del(feedsKey);
     await redis.set(`${redisPrefix}:ingester:started_at`, new Date().toISOString());
     await redis.set(`${redisPrefix}:ingester:commit`, gitCommit);

@@ -1,8 +1,5 @@
 import type { LegacyPost } from "./generated.ts";
 
-// the hand written types for `changes` and post snapshots, these mirror src/ingester/posts.ts on the server
-
-/** A field's old and new value. */
 export interface ValueChange<T> { new: T; old: T }
 export interface SetChange<T> { added: Array<T>; removed: Array<T> }
 
@@ -12,7 +9,6 @@ export type TagCategoryName = "artist" | "character" | "contributor" | "copyrigh
 
 export type PostFlagName = Extract<keyof LegacyPost["flags"], string>;
 
-/** Tags are split by category, so moving a tag between categories shows up as a remove & add. */
 export type PostChanges = Partial<
     Record<`tags.${TagCategoryName}`, SetChange<string>>
     & Record<`flags.${PostFlagName}`, ValueChange<boolean>>
@@ -30,7 +26,6 @@ export type PostChanges = Partial<
     }
 >;
 
-/** What was last known of a post, only `id` is guaranteed. */
 export type PostSnapshot = Partial<{
     approver_id: number | null;
     change_seq: number;

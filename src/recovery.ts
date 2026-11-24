@@ -3,27 +3,17 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { recoveryKey } from "./config.ts";
 import redis from "./redis.ts";
 
-// re-fetching a window of time the ingester missed. the gateway asks for one, the ingester runs it
-// this is the shared part, the record in redis that both sides read & write. the ingester side is ingester/recovery.ts,
-// the admin form is in gateway/admin.ts
-
-// pending: asked for, the ingester hasn't picked it up yet. cancelled is set by the admin page, the ingester stops
-// at its next check
 export type RecoveryStatus = "pending" | "running" | "done" | "failed" | "cancelled";
 
 export interface SourceProgress {
-    /** where a source that saves its spot got to, so a restart carries on from there */
     checkpoint?: unknown;
-    /** where it is, for the status page */
     detail?: string;
     error: string | null;
     events: number;
-    /** how far through the window it is, 0-1, for sources that know */
     fraction?: number;
     status: "pending" | "running" | "done" | "failed";
 }
 
-// times are iso strings, events is the total across sources
 export interface Recovery {
     error: string | null;
     events: number;
@@ -39,7 +29,6 @@ export interface Recovery {
     to: string;
 }
 
-// what's sent to clients in `recovery` & `ready`
 export interface RecoveryNotice {
     done: boolean;
     events?: number;
@@ -50,7 +39,6 @@ export interface RecoveryNotice {
     to: string;
 }
 
-// done=false when it starts, done=true (with how it went) when it finishes
 export const notice = (recovery: Recovery, done: boolean): RecoveryNotice => ({
     id: recovery.id,
     from: recovery.from,
@@ -60,8 +48,6 @@ export const notice = (recovery: Recovery, done: boolean): RecoveryNotice => ({
     ...done ? { status: recovery.status, events: recovery.events } : {},
 });
 
-// set while a recovery is publishing, so everything it publishes (follow-ups too) gets flagged
-// the value is the recovery id. request() in e621.ts also checks it to put recovery requests in the background
 export const recoveryContext = new AsyncLocalStorage<string>();
 
 export async function getRecovery(): Promise<Recovery | null> {
@@ -75,7 +61,6 @@ export async function saveRecovery(recovery: Recovery): Promise<void> {
 
 export const isActive = (recovery: Recovery | null): recovery is Recovery => recovery?.status === "pending" || recovery?.status === "running";
 
-// a string back is why it was refused
 export async function requestRecovery(from: Date, to: Date, sources: Array<string>, by: string): Promise<Recovery | string> {
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return "invalid time";
     if (from >= to) return "from has to be before to";
@@ -103,7 +88,6 @@ export async function requestRecovery(from: Date, to: Date, sources: Array<strin
 export async function cancelRecovery(): Promise<boolean> {
     const recovery = await getRecovery();
     if (!isActive(recovery)) return false;
-    // the ingester checks for this between pages
     await saveRecovery({ ...recovery, status: "cancelled" });
     return true;
 }

@@ -5,11 +5,6 @@ import redis, { fieldsToObject, type StreamEntry } from "./redis.ts";
 
 import type { SlowModeNotice } from "./slowMode.ts";
 
-// event types and the redis stream they go through. the ingester publishes, gateway/hub.ts reads them back and every
-// session gets the ones its subscriptions match
-
-// every public event type, `<resource>.<what happened>`. this list is also what /info, `hello`, the docs and the
-// generated client types use, so adding one here adds it everywhere
 export const EVENT_TYPES = [
     "artist.create",
     "artist.delete",
@@ -103,14 +98,12 @@ export const EVENT_TYPES = [
 ] as const;
 export type EventType = typeof EVENT_TYPES[number];
 
-// polled with each user's own credentials, `*` doesn't include these. they never go on the stream, see gateway/private.ts
 export const PRIVATE_EVENT_TYPES = ["dmail.create", "private_post_set.add_posts", "private_post_set.remove_posts"] as const;
 export type PrivateEventType = typeof PRIVATE_EVENT_TYPES[number];
 const privateTypeSet = new Set<string>(PRIVATE_EVENT_TYPES);
 export const isPrivateEventType = (type: string): type is PrivateEventType => privateTypeSet.has(type);
 
 // the ingester's account can't see hidden/deleted records, so these come from mod actions
-// mod action `action` -> the extra event published alongside mod_action.create, its data is the mod action
 export const MOD_ACTION_EVENTS: Partial<Record<string, EventType>> = {
     comment_hide: "comment.hide",
     comment_unhide: "comment.unhide",
@@ -138,7 +131,6 @@ export const MOD_ACTION_EVENTS: Partial<Record<string, EventType>> = {
     wiki_page_delete: "wiki_page.delete",
     user_delete: "user.delete",
     admin_user_delete: "user.delete",
-    // users have no updated_at
     user_name_change: "user.update",
     user_level_change: "user.update",
     user_flags_change: "user.update",
@@ -154,11 +146,8 @@ export const MOD_ACTION_EVENTS: Partial<Record<string, EventType>> = {
     user_ban_update: "ban.update",
     user_feedback_update: "user_feedback.update",
 };
-// event types whose data is a mod action, the filter reads them like mod_action.create
 export const MOD_ACTION_EVENT_TYPES = new Set<EventType>(Object.values(MOD_ACTION_EVENTS) as Array<EventType>);
 
-// these updates come from a version feed and their data is the version, not the record. the filter reads them like
-// the version event
 export const VERSION_EVENTS: Partial<Record<EventType, EventType>> = {
     "note.update": "note_version.create",
     "pool.update": "pool_version.create",
@@ -173,24 +162,15 @@ export function isEventType(type: string): type is EventType {
     return eventTypeSet.has(type);
 }
 
-// an event read back off the stream
 export interface StreamEvent {
     data: Record<string, unknown>;
-    /** the stream id, it's also the cursor clients replay from */
     id: string;
-    /** data as it was stored, so it can be put in frames without stringifying again for every client */
     raw: string;
-    /** published by a recovery */
     recovered: boolean;
-    /** when it happened on e621, not when it was published */
     time: string;
     type: EventType;
 }
 
-// notices go to every client whatever they're subscribed to, as their own op. they go on the stream so they're in
-// order with the events and get replayed
-//  - recovery: a recovery started or finished (recovery.ts)
-//  - slow_mode: slow mode was turned on or off from the admin page (slowMode.ts)
 interface NoticeData {
     recovery: RecoveryNotice;
     slow_mode: SlowModeNotice;
@@ -208,8 +188,6 @@ export type StreamItem = StreamEvent | StreamNotice;
 
 export const isNotice = (item: StreamItem): item is StreamNotice => "notice" in item;
 
-// adds an event to the stream and counts it for the status page. MAXLEN ~ caps the length (roughly, which is much
-// cheaper), the age based trim is in ingester/index.ts. anything published inside a recovery gets `r` set
 export async function publish(type: EventType, time: string, data: unknown): Promise<string> {
     count("events");
     count(`events.${type}`);
@@ -222,7 +200,6 @@ export async function publishNotice<T extends NoticeType>(type: T, notice: Notic
     return redis.send("XADD", [streamKey, "MAXLEN", "~", String(maxStreamLength), "*", "t", type, "d", JSON.stringify(notice)]) as Promise<string>;
 }
 
-// null for anything malformed or with a type that's since been removed, those are skipped
 export function parseEntry([id, fields]: StreamEntry): StreamItem | null {
     const { t, ts, d, r } = fieldsToObject(fields);
     if (d === undefined) return null;
@@ -231,12 +208,10 @@ export function parseEntry([id, fields]: StreamEntry): StreamItem | null {
     return { id, type: t, time: ts ?? "", data: JSON.parse(d) as Record<string, unknown>, raw: d, recovered: r !== undefined };
 }
 
-// the json sent to clients, built by hand so the stored data is dropped in as is instead of parsed & stringified again
 export function dispatchFrame(event: StreamEvent): string {
     return `{"op":"dispatch","id":${JSON.stringify(event.id)},"type":"${event.type}","time":${JSON.stringify(event.time)},${event.recovered ? "\"recovered\":true," : ""}"data":${event.raw}}`;
 }
 
-// the op is the notice type, d is its NoticeData
 export function noticeFrame(notice: StreamNotice): string {
     return `{"op":"${notice.notice}","id":${JSON.stringify(notice.id)},"d":${notice.raw}}`;
 }

@@ -5,25 +5,18 @@ import { backfillEnabled, clientsKey, idleKey, idlePollScale } from "../config.t
 import redis from "../redis.ts";
 import { getSlowMode } from "../slowMode.ts";
 
-// while nobody's connected to any gateway and the backfill isn't done, feeds poll IDLE_POLL_SCALE times slower so
-// the backfill gets most of the requests. nobody's there to miss the delay, and nothing's lost since feeds carry on
-// from their cursor. as soon as someone connects it goes back to full speed
-// slow mode (../slowMode.ts) is checked here too, it stacks with idle
 const CHECK_MS = 15_000;
 
 let idle = false;
 let slow = 1;
 const wakers = new Set<() => void>();
 
-// what feed intervals are multiplied by right now
 export const pollScale = (): number => (idle ? idlePollScale : 1) * slow;
 
-// called when polling speeds up, so feeds can poll right away instead of finishing their slow wait
 export function onWake(fn: () => void): void {
     wakers.add(fn);
 }
 
-// the client count comes from every gateway's presence report (gateway/presence.ts)
 async function check(): Promise<void> {
     const before = pollScale();
     const counts = await redis.send("HVALS", [clientsKey]) as Array<string>;

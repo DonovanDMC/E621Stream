@@ -4,27 +4,18 @@ import { CloseCodes, type EventType, type PrivateEventType, type StreamEvent, ty
 import type { SnapshotDataMap } from "./generated.ts";
 
 export interface Options {
-    /** Your e621 username & api key, or a token from https://e621.stream/authorize. */
     auth?: { apiKey: string; username: string } | { token: string };
-    /** Shown in the server's logs. */
     client?: string;
-    /** An event id or millisecond timestamp to replay from. */
     cursor?: number | string;
-    /** Used to get the websocket url from `/info`. */
     fetch?: typeof fetch;
-    /** Reconnect when the connection drops. */
     reconnect?: boolean;
     subscriptions: Array<Subscription>;
-    /** The site, the websocket url comes from its `/info`. A `ws://` or `wss://` url is connected to directly. */
     url?: string;
-    /** For runtimes without a global WebSocket (node < 22), the `ws` package works. */
     WebSocket?: typeof WebSocket;
 }
 
-/** We're going back over a window of time the server missed, see https://e621.stream/replaying/#recoveries */
 export interface Recovery {
     done: boolean;
-    /** How many events it sent, once it's done. */
     events?: number;
     from: string;
     id: string;
@@ -33,23 +24,17 @@ export interface Recovery {
     to: string;
 }
 
-/** The server is polling e621 slower while it's responding slow, so events arrive later than usual. Nothing's missed. */
 export interface SlowMode {
     enabled: boolean;
-    /** How many times slower than usual, `null` when it's off. */
     scale: number | null;
-    /** When it was turned on or off. */
     since: string;
 }
 
 export interface Ready {
-    /** If the cursor was older than anything still kept. */
     cursor_expired?: boolean;
-    /** The recovery that's running, if there is one. Older servers don't send this. */
     recovery?: Recovery | null;
     replaying: boolean;
     session_id: string;
-    /** Slow mode, if it's on. Older servers don't send this. */
     slow_mode?: SlowMode | null;
     subscriptions: Array<Subscription>;
     user: { id: number; level: number; level_string: string; name: string } | null;
@@ -57,28 +42,22 @@ export interface Ready {
 
 export type SnapshotResource = keyof SnapshotDataMap;
 
-/** Keyed by id, `null` for ones that aren't known. */
 export type Snapshots<R extends SnapshotResource> = Record<number, SnapshotDataMap[R] | null>;
 
-// a snapshots() call waiting on its answer, chunks are merged into received until the last one
 interface PendingSnapshot { received: Snapshots<SnapshotResource>; reject(err: Error): void; resolve(snapshots: Snapshots<SnapshotResource>): void }
 
 export interface ClientEvents {
     close: [{ code: number; reason: string; reconnecting: boolean }];
-    /** Every event, public or private. */
     dispatch: [StreamEvent];
     error: [Error];
     ready: [Ready];
     reconnecting: [{ attempt: number; delayMS: number }];
-    /** A recovery started or finished, events from it have `recovered: true`. */
     recovery: [Recovery];
     replayComplete: [{ cursor: string | null; events: number }];
-    /** Slow mode was turned on or off. */
     slowMode: [SlowMode];
     subscribed: [Array<Subscription>];
 }
 
-// the client events, plus one per event type
 type Listeners = ClientEvents & { [K in EventType | PrivateEventType]: [StreamEvent<K>] };
 
 export class StreamError extends Error {
@@ -88,7 +67,6 @@ export class StreamError extends Error {
     }
 }
 
-// reconnecting after these would just get closed the same way again
 const FATAL = new Set<number>([
     CloseCodes.UNKNOWN_OP,
     CloseCodes.DECODE_ERROR,
@@ -103,33 +81,18 @@ const FATAL = new Set<number>([
 const MAX_DELAY_MS = 60_000;
 const HEARTBEAT_MS = 30_000;
 
-/**
- * A connection to E621Stream, see https://e621.stream
- * @example
- * ```ts
- * const stream = new E621Stream({ auth: { username, apiKey }, subscriptions: ["post.create"] });
- * stream.on("post.create", event => console.log(event.data.post.id));
- * stream.connect();
- * ```
- */
 export class E621Stream extends Emitter<Listeners> {
-    // reconnect attempts since the last ready, for the backoff
     private attempt = 0;
-    // close() was called, so don't reconnect
     private closing = false;
-    // fetching /info
     private connecting = false;
     private heartbeat: ReturnType<typeof setInterval> | null = null;
-    // the server sends an error op right before closing, it's held until the close so both can be reported together
     private lastError: StreamError | null = null;
     private lastHeartbeatAck = true;
-    // matches snapshot answers to their request
     private nonce = 0;
     private pendingSnapshots = new Map<string, PendingSnapshot>();
     private ready = false;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private socket: WebSocket | null = null;
-    /** The id of the last event seen, sent when reconnecting so nothing's missed. */
     cursor: string | null;
     readonly options: Options & { url: string };
 
@@ -139,7 +102,6 @@ export class E621Stream extends Emitter<Listeners> {
         this.cursor = options.cursor === undefined ? null : String(options.cursor);
     }
 
-    // every message from the server. binary would be compressed, which this never asks for
     private handle(raw: unknown): void {
         if (typeof raw !== "string") {
             this.emit("error", new Error("compression isn't supported"));
@@ -167,7 +129,6 @@ export class E621Stream extends Emitter<Listeners> {
                 break;
             }
             case "dispatch": {
-                // private events aren't on the stream, their id can't be replayed from
                 const event = { id: message.id, type: message.type, time: message.time, data: message.data, ...(message.private ? { private: true } : {}), ...(message.recovered ? { recovered: true } : {}) } as StreamEvent;
                 if (!event.private) this.cursor = event.id;
                 this.emit("dispatch", event);
@@ -176,7 +137,6 @@ export class E621Stream extends Emitter<Listeners> {
                 break;
             }
             case "recovery": {
-                // these are on the stream too, so they move the cursor
                 if (message.id) this.cursor = message.id;
                 this.emit("recovery", message.d as Recovery);
                 break;
@@ -199,7 +159,6 @@ export class E621Stream extends Emitter<Listeners> {
                 const pending = nonce === null ? undefined : this.pendingSnapshots.get(nonce);
                 if (pending) {
                     Object.assign(pending.received, snapshots);
-                    // big requests come back in chunks, older servers don't send done
                     if (done !== false) {
                         this.pendingSnapshots.delete(nonce!);
                         pending.resolve(pending.received);
@@ -219,8 +178,6 @@ export class E621Stream extends Emitter<Listeners> {
         }
     }
 
-    // rejects pending snapshots, then reconnects with backoff (1s doubling, 30s base when rate limited, up to a minute,
-    // with jitter) unless it was closed on purpose or with a fatal code
     private onClose(code: number, reason: string): void {
         this.stopHeartbeat();
         this.socket = null;
@@ -254,7 +211,6 @@ export class E621Stream extends Emitter<Listeners> {
             }
         });
         socket.addEventListener("close", (event: CloseEvent) => { this.onClose(event.code, event.reason); });
-        // close always follows, that's where it's handled
         socket.addEventListener("error", () => null);
     }
 
@@ -262,7 +218,6 @@ export class E621Stream extends Emitter<Listeners> {
         if (this.socket?.readyState === 1) this.socket.send(JSON.stringify(payload));
     }
 
-    // a heartbeat with no ack by the next one means the connection's dead, closing it gets a reconnect going
     private startHeartbeat(): void {
         this.lastHeartbeatAck = true;
         this.heartbeat = setInterval(() => {
@@ -280,7 +235,6 @@ export class E621Stream extends Emitter<Listeners> {
         this.heartbeat = null;
     }
 
-    // fetched every time, so it can move
     private async websocketURL(): Promise<string> {
         const { url } = this.options;
         if (/^wss?:\/\//i.test(url)) return url;
@@ -291,7 +245,6 @@ export class E621Stream extends Emitter<Listeners> {
         return new URL(websocket, url).href;
     }
 
-    /** Close the connection. */
     close(): void {
         this.closing = true;
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -299,11 +252,9 @@ export class E621Stream extends Emitter<Listeners> {
         this.socket?.close(1000, "closed by client");
     }
 
-    /** Connect, does nothing if already connected or connecting. */
     connect(): this {
         if (this.socket || this.connecting) return this;
         this.closing = false;
-        // not present before node 22
         const global = (globalThis as Partial<Pick<typeof globalThis, "WebSocket">>).WebSocket;
         const Socket = this.options.WebSocket ?? global;
         if (!Socket) throw new Error("no WebSocket available, pass one with the WebSocket option");
@@ -314,20 +265,11 @@ export class E621Stream extends Emitter<Listeners> {
         }, (err: unknown) => {
             this.connecting = false;
             this.emit("error", err instanceof Error ? err : new Error(String(err)));
-            // retried the same as a dropped connection
             this.onClose(1006, "couldn't get the websocket url");
         });
         return this;
     }
 
-    /**
-     * Get what was last seen of up to 1000 records. Only the fields update events are compared on are kept, see https://e621.stream/snapshots/
-     * @example
-     * ```ts
-     * const posts = await stream.snapshots("post", [1, 2, 3]);
-     * console.log(posts[1]?.tags);
-     * ```
-     */
     async snapshots<R extends SnapshotResource>(resource: R, ids: Array<number>): Promise<Snapshots<R>> {
         if (!this.ready) throw new Error("not ready");
         const nonce = String(++this.nonce);
@@ -337,9 +279,7 @@ export class E621Stream extends Emitter<Listeners> {
         });
     }
 
-    /** Replace the current subscriptions. */
     subscribe(subscriptions: Array<Subscription>): void {
-        // kept, so a reconnect identifies with these
         this.options.subscriptions = subscriptions;
         this.send({ op: "subscribe", d: { subscriptions } });
     }

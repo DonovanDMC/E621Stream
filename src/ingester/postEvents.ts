@@ -5,10 +5,7 @@ import { checkReplacements, type PostEvent } from "./replacements.ts";
 
 import type { Item } from "./updates.ts";
 
-// follow ups for post events (the post_events feed's `after`), for things that don't show up anywhere else
-
 // an expunged post is gone from every search, so the post event is the only sign of it. post.destroy carries the last
-// snapshot we had of it, then its snapshots (and its replacements') are dropped
 async function expunged(event: PostEvent): Promise<number> {
     const last = (await getSnapshots("post", [event.post_id])).get(event.post_id);
     await publish("post.destroy", event.created_at ?? new Date().toISOString(), { post: { id: event.post_id, ...last }, post_event: event });
@@ -17,7 +14,6 @@ async function expunged(event: PostEvent): Promise<number> {
     return 1;
 }
 
-// returns how many extra events it published
 export async function afterPostEvent(item: Item): Promise<number> {
     const event = item as PostEvent;
     if (event.action === "expunged") return expunged(event);

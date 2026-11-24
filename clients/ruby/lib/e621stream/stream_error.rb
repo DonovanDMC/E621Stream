@@ -2,7 +2,6 @@
 # typed: strict
 
 module E621Stream
-  # Sent by the server right before it closes the connection, `code` is one of CloseCodes.
   class StreamError < StandardError
     extend(T::Sig)
 

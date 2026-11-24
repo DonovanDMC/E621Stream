@@ -1,8 +1,3 @@
-// entry point. one image runs every part, ROLE picks which:
-//  - ingester: polls e621, works out what changed, and puts events on the redis stream
-//  - gateway: the http/websocket server, reads the stream and sends events to clients
-//  - egress: a CONNECT proxy so e621 requests can go out from another ip (see egress.ts)
-//  - all: ingester & gateway in one process, for running locally
 import Debug from "@yiffy/debug";
 
 import { startEgress } from "./egress.ts";

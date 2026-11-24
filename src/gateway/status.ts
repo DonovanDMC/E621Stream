@@ -12,10 +12,6 @@ import { sessions } from "./session.ts";
 import type { DataCounts } from "../ingester/data.ts";
 import type { FeedHealth } from "../ingester/index.ts";
 
-// /status & /status.json. everything comes from redis & postgres so any gateway shows the same thing (apart from
-// `gateway`, which is only the one you hit). build() makes the json, statusPage() turns it into html
-
-// a field plus everything under it, "failed" counts failed.ingester, failed.gateway, ...
 const sum = (counts: Counts, prefix: string): number => Object.entries(counts).reduce((total, [field, n]) => field === prefix || field.startsWith(`${prefix}.`) ? total + n : total, 0);
 const add = (list: Array<Counts>): Counts => {
     const out: Counts = {};
@@ -23,13 +19,10 @@ const add = (list: Array<Counts>): Counts => {
     return out;
 };
 const eventsOf = (counts: Counts): number => counts.events ?? 0;
-// backfill & private requests are counted twice, once by role in logs.ts and once on their own, so those are taken
-// back off
 const requestsOf = (counts: Counts): number => sum(counts, "requests") - (counts["requests.backfill"] ?? 0) - (counts["requests.private"] ?? 0);
 const avgMs = (ms: number, requests: number): number | null => requests === 0 ? null : Math.round(ms / requests);
 const averageOf = (counts: Counts): number | null => avgMs(sum(counts, "request_ms"), requestsOf(counts));
 
-// the Data table. newest is the cursor field with the highest id, feeds are what keep it up to date
 const MODELS = [
     { resource: "post", label: "Posts", newest: "posts:max_id", feeds: ["posts"] },
     { resource: "comment", label: "Comments", newest: "comments", feeds: ["comments", "comment_updates"] },
@@ -55,7 +48,6 @@ interface Model {
     stored: number;
 }
 
-// last checked is the oldest of its feeds' last polls, lag is its slowest feed's interval
 function models(counts: DataCounts | null, cursors: Record<string, string>, feeds: Array<FeedHealth & { name: string }>): Array<Model> {
     return MODELS.map(({ feeds: names, label, newest, resource }) => {
         const health = names.map(name => feeds.find(feed => feed.name === name)).filter(feed => feed !== undefined);
@@ -78,7 +70,6 @@ interface Backfill extends BackfillState {
     progress: number | null;
 }
 
-// progress 0-1, and an eta assuming it keeps going at the rate it has so far
 function backfillProgress(state: BackfillState): Backfill {
     let progress: number | null = null;
     if (state.status === "done") progress = 1;
@@ -157,14 +148,11 @@ async function build(): Promise<Record<string, unknown>> {
         gateway: { connections: sessions.size, events_received: hubStats.received },
         feeds,
         backfill,
-        // the latest one, who asked for it is only on the admin page
         recovery: recovery ? { ...recovery, requested_by: undefined, active: isActive(recovery) } : null,
         data: { counted_at: counts?.computed_at ?? null, models: models(counts, cursors ?? {}, feeds) },
     };
 }
 
-// built at most every 10 seconds, the page refreshes itself and there could be lots of people on it. a failed build
-// isn't cached
 let cache: { at: number; data: Promise<Record<string, unknown>> } | null = null;
 export function status(): Promise<Record<string, unknown>> {
     if (!cache || Date.now() - cache.at > 10_000) {
@@ -190,7 +178,6 @@ function duration(seconds: number): string {
     return `${Math.floor(seconds / 86_400)}d ${Math.round(seconds % 86_400 / 3600)}h`;
 }
 
-// a bar per value as an inline svg, highlight marks bars (failed requests) in red
 function chart(values: Array<number>, label: string, highlight?: Array<number>): string {
     const max = Math.max(1, ...values), w = 6, gap = 2, h = 48;
     const bars = values.map((v, i) => {
@@ -209,7 +196,6 @@ function version(gateway: string, ingester: string | null): string {
 
 const STATUS_CLASS: Record<string, string> = { done: "ok", running: "run", failed: "bad", waiting: "dim", pending: "dim" };
 
-// shared with the admin & token pages
 export const PAGE_CSS = `
 :root { --bg: #1c1c21; --surface: #242424; --border: #3e4346; --text: #bfbfbf; --heading: #fff; --link: #a9cbea; --ok: #8fd18f; --bad: #e69999; --run: #a9cbea; }
 * { box-sizing: border-box; }
@@ -265,7 +251,6 @@ export async function statusPage(): Promise<string> {
             <td class="detail">${esc(b.error ?? b.detail ?? "")}</td></tr>`).join("")
         : `<tr><td colspan="7" class="bad">${esc(backfill.error)}</td></tr>`;
     const feedRows = feeds.map((f) => {
-        // red if it's missed about 5 polls
         const stale = f.last_ok_at && Date.now() - new Date(f.last_ok_at).getTime() > f.interval_ms * 5 + 60_000;
         return `<tr><td>${esc(f.name)}</td><td>${duration(Math.round(f.interval_ms / 1000))}</td><td class="${stale || !f.last_ok_at ? "bad" : ""}">${ago(f.last_ok_at)}</td>
             <td class="n">${num(f.published)}</td><td class="${f.error ? "bad" : "dim"}">${f.error ? `${ago(f.last_failed_at)}: ${esc(f.error)}` : f.last_failed_at ? ago(f.last_failed_at) : ""}</td></tr>`;
@@ -380,7 +365,6 @@ ${typeRows}
 <footer>${data.tracking_since ? `Counting since ${esc(new Date(data.tracking_since).toUTCString())}. ` : ""}${num(data.gateway.connections)} connection(s) to this gateway. Ingester up since ${ago(data.ingester.started_at)}. Updated ${esc(new Date(data.generated_at).toUTCString())}, refreshes every 15 seconds. <a href="/status.json">JSON</a><br>${version(data.gateway_commit, data.ingester.commit)}</footer>
 </main>
 <script>
-// swaps in a fresh <main> every 15s while the tab's visible, the noscript refresh above does it without js
 const REFRESH_MS = 15000;
 let timer;
 async function refresh() {

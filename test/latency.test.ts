@@ -23,7 +23,6 @@ describe("latency", () => {
             changes.push(next.change);
             state = next;
         }
-        // the slow check in the middle starts the count over
         expect(changes).toEqual([null, null, null, null, null, "recovered"]);
         expect(state.latency?.elevated).toBe(false);
     });

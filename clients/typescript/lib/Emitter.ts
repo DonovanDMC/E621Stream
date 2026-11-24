@@ -1,6 +1,5 @@
 export type Listener<Args extends Array<unknown>> = (...args: Args) => void;
 
-// a tiny typed event emitter, so the client works the same in browsers, node, bun & deno without depending on node:events
 export default class Emitter<Events extends { [K in keyof Events]: Array<unknown> }> {
     private listeners = new Map<keyof Events, Set<unknown>>();
 
@@ -8,7 +7,6 @@ export default class Emitter<Events extends { [K in keyof Events]: Array<unknown
         for (const listener of this.listeners.get(event) ?? []) (listener as Listener<Events[K]>)(...args);
     }
 
-    // for when the event name isn't known until runtime
     protected emitUnchecked(event: keyof Events, ...args: Array<unknown>): void {
         for (const listener of this.listeners.get(event) ?? []) (listener as Listener<Array<unknown>>)(...args);
     }

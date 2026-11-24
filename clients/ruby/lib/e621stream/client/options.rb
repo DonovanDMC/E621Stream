@@ -5,18 +5,12 @@ module E621Stream
   class Client
     class Options < T::Struct
       const(:subscriptions, T::Array[Subscription])
-      # Your e621 username and an api key, from Account > Manage API Access.
       const(:username, T.nilable(String), default: nil)
       const(:api_key, T.nilable(String), default: nil)
-      # A token from https://e621.stream/authorize, instead of a username & api key.
       const(:token, T.nilable(String), default: nil)
-      # The site, the websocket url comes from its /info. A ws:// or wss:// url is connected to directly.
       const(:url, String, default: "https://e621.stream")
-      # A name for your client, shown in the server's logs.
       const(:client, T.nilable(String), default: nil)
-      # An event id (or a millisecond timestamp) to replay from. After that, reconnecting resumes from the last event.
       const(:cursor, T.nilable(T.any(String, Integer)), default: nil)
-      # Reconnects with backoff when the connection drops, unless the server closed it for something retrying won't fix.
       const(:reconnect, T::Boolean, default: true)
     end
   end

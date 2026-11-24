@@ -6,34 +6,22 @@ import sql, { retryDeadlocks } from "../db.ts";
 
 import { setState } from "./state.ts";
 
-// imports e621's daily db exports (https://e621.net/db_export/) into the snapshots table. each export is streamed
-// into a staging table, then turned into snapshots with one big INSERT ... SELECT that builds the same json the live
-// feeds would. the snapshot version stops an old export overwriting anything newer the feeds already wrote
-// columns are checked first, a field the export doesn't have anymore is left out instead of failing everything
-
 type ExportName = "bulk_update_requests" | "pools" | "post_replacements" | "posts" | "tag_aliases" | "tag_implications" | "tags";
 
 const downloader = new E621ExportDownloader();
-// post ids per insert, progress is shown after each
 const POST_BATCH = 250_000;
-// tag category numbers, in order (0 is general). the posts api groups tags by these names
 const CATEGORIES = ["general", "artist", "contributor", "copyright", "character", "species", "invalid", "meta", "lore"];
 
-// what an INSERT gives back, count is the rows written
 type Written = Array<never> & { count: number };
 
-// quotes a column name for sql
 const ident = (name: string): string => `"${name.replaceAll("\"", "\"\"")}"`;
 
-// one key in the snapshot json: the export columns it needs, and the sql that builds it
 interface Field { columns: Array<string>; field: string; sql: string }
 
 interface Staged { columns: Set<string>; table: string }
 
 // e621-export-downloader's download buffers everything in memory when it can't write it out fast enough, which
 // got the ingester oom killed on the posts export
-// so it's curl | gunzip | psql \copy instead, nothing goes through bun. the values go in through env so they don't
-// need escaping
 async function streamImport(url: string, table: string): Promise<void> {
     const proc = Bun.spawn(["sh", "-c", "set -o pipefail; curl -sSfL -A \"$AGENT\" \"$URL\" | gunzip | psql \"$DATABASE\" --no-psqlrc -q -v ON_ERROR_STOP=1 -c \"\\copy $TABLE FROM STDIN WITH (FORMAT csv, HEADER true)\""], {
         env: { ...process.env, AGENT: e621UserAgent, URL: url, DATABASE: databaseURL, TABLE: table },
@@ -44,9 +32,6 @@ async function streamImport(url: string, table: string): Promise<void> {
     if (code !== 0) throw new Error(`importing ${url} failed (${code}): ${stderr.trim()}`);
 }
 
-// downloads an export into bf_<name>, with a text column for every column in the csv. unlogged since it's thrown away
-// after. required columns that are missing fail the import
-// everything as text so null and "" stay as they are
 async function stage(source: string, name: ExportName, required: Array<string>): Promise<Staged> {
     const table = `bf_${name}`;
     const exp = await downloader.get(name);
@@ -64,8 +49,6 @@ async function stage(source: string, name: ExportName, required: Array<string>):
     return { table, columns: new Set(columns) };
 }
 
-// the jsonb_build_object(...) for a snapshot, with whichever fields the export has the columns for
-// fields left out just don't get diffed until the record's next update writes a full snapshot
 function build(name: string, fields: Array<Field>, has: (column: string) => boolean): string {
     const usable = fields.filter(field => field.columns.every(column => has(column)));
     const skipped = fields.filter(field => !usable.includes(field)).map(field => field.field);
@@ -73,16 +56,13 @@ function build(name: string, fields: Array<Field>, has: (column: string) => bool
     return `jsonb_build_object(${usable.map(field => `'${field.field}', ${field.sql}`).join(", ")})`;
 }
 
-// a column as is, or as a number (empty is null). alias is the table alias with its dot, "b."
 const text = (column: string, alias = ""): Field => ({ field: column, columns: [column], sql: `${alias}${ident(column)}` });
 const int = (column: string, alias = ""): Field => ({ field: column, columns: [column], sql: `nullif(${alias}${ident(column)}, '')::bigint` });
 
 // export timestamps are utc without a timezone
 const version = (has: (column: string) => boolean): string => has("updated_at") ? "coalesce((extract(epoch FROM (nullif(updated_at, '')::timestamp AT TIME ZONE 'UTC')) * 1000)::bigint, 0)" : "0";
-// same as putSnapshots in db.ts
 const upsert = "ON CONFLICT (resource, id) DO UPDATE SET version = EXCLUDED.version, data = EXCLUDED.data WHERE snapshots.version <= EXCLUDED.version";
 
-// these have to build the same fields as TRACKED in ingester/updates.ts
 const tagRequest = [text("status"), text("antecedent_name"), text("consequent_name"), text("reason"), int("approver_id"), int("forum_topic_id")];
 const REQUESTS = {
     tag_aliases: { resource: "tag_alias", fields: tagRequest },
@@ -91,7 +71,6 @@ const REQUESTS = {
     post_replacements: { resource: "post_replacement", fields: [text("status"), int("approver_id"), text("reason"), int("post_id")] },
 } satisfies Record<string, { fields: Array<Field>; resource: string }>;
 
-// the simple exports, one row is one snapshot
 export async function importRequests(name: keyof typeof REQUESTS): Promise<void> {
     const { fields, resource } = REQUESTS[name];
     const { columns, table } = await stage(name, name, ["id"]);
@@ -106,17 +85,13 @@ export async function importRequests(name: keyof typeof REQUESTS): Promise<void>
     await sql.unsafe(`DROP TABLE ${table}`);
 }
 
-// booleans are 't'/'f' in the csv. FLAGS is [api name, export column]
 const flag = (name: string, column: string): string => `'${name}', b.${column} = 't'`;
 const FLAGS = [["pending", "is_pending"], ["flagged", "is_flagged"], ["note_locked", "is_note_locked"], ["status_locked", "is_status_locked"], ["rating_locked", "is_rating_locked"], ["deleted", "is_deleted"]] as const;
 
-// posts need three exports: posts, tags (for each tag's category) and pools (posts don't list their pools in the
-// export, pools list their posts). the result has to match snapshot() in ingester/posts.ts
 export async function importPosts(): Promise<void> {
     const tags = await stage("posts", "tags", []);
     const pools = await stage("posts", "pools", []);
     const posts = await stage("posts", "posts", ["id", "change_seq"]);
-    // "tags:..." & "pools:..." are made up column names for fields that need the other exports
     const has = (column: string): boolean => {
         if (column === "tags:name,category") return tags.columns.has("name") && tags.columns.has("category");
         if (column === "pools:id,post_ids") return pools.columns.has("id") && pools.columns.has("post_ids");
@@ -142,13 +117,10 @@ export async function importPosts(): Promise<void> {
     ];
     const data = build("posts", fields, has);
 
-    // the batches go by id range, so it needs to be a number with an index
     await sql.unsafe(`ALTER TABLE ${posts.table} ALTER COLUMN id TYPE bigint USING id::bigint`);
     await sql.unsafe(`CREATE INDEX ON ${posts.table} (id)`);
     Debug("backfill", "working out children and pools");
     await setState("posts", "export", { detail: "working out each post's children and pools" });
-    // post id -> its children's ids, from everyone's parent_id. an empty table when the export can't say, so the joins
-    // below still work
     if (has("parent_id")) {
         await sql.unsafe(`
             CREATE UNLOGGED TABLE bf_children AS
@@ -158,7 +130,6 @@ export async function importPosts(): Promise<void> {
         await sql.unsafe("CREATE UNLOGGED TABLE bf_children (id bigint, ids jsonb)");
     }
     await sql.unsafe("CREATE INDEX ON bf_children (id)");
-    // post id -> the pools it's in, post_ids is a postgres array literal ({1,2,3}) in the export
     if (has("pools:id,post_ids")) {
         await sql.unsafe(`
             CREATE UNLOGGED TABLE bf_post_pools AS
@@ -174,8 +145,6 @@ export async function importPosts(): Promise<void> {
 
     const [{ max }] = await sql.unsafe<[{ max: number | string }]>(`SELECT coalesce(max(id), 0)::bigint AS max FROM ${posts.table}`);
     const categories = `ARRAY[${CATEGORIES.map(c => `'${c}'`).join(", ")}]`;
-    // tag_string is space separated. each tag is looked up for its category (unknown ones are general), then grouped
-    // into { category: [tags] } like the api has. sql arrays start at 1, so category + 1
     const postTags = tagged
         ? `tag_rows AS (
                 SELECT b.id, coalesce(t.category::int, 0) AS category, tag
@@ -186,7 +155,6 @@ export async function importPosts(): Promise<void> {
             post_tags AS (SELECT id, jsonb_object_agg((${categories})[category + 1], tags) AS tags FROM by_category GROUP BY id)`
         : "post_tags AS (SELECT NULL::bigint AS id, NULL::jsonb AS tags WHERE false)";
     let written = 0;
-    // not resumable, a failure starts the whole export over next time
     for (let from = 0; from < Number(max); from += POST_BATCH) {
         const to = from + POST_BATCH;
         const result = await retryDeadlocks(() => sql.unsafe<Written>(`

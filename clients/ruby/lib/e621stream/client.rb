@@ -7,21 +7,14 @@ require("async/http/internet")
 require("async/websocket/client")
 
 module E621Stream
-  # A connection to E621Stream. Listeners run inside the client's reactor, between reading messages.
-  #
-  #   client = E621Stream::Client.new(username: "...", api_key: "...", subscriptions: ["post.create"])
-  #   client.on("post.create") { |event| puts(event.data["post"]["id"]) }
-  #   client.run
   class Client
     extend(T::Sig)
 
     Listener = T.type_alias { T.proc.params(arg0: T.untyped).void }
     Snapshots = T.type_alias { T::Hash[Integer, T.nilable(T::Hash[String, T.untyped])] }
     SnapshotCallback = T.type_alias { T.proc.params(snapshots: Snapshots).void }
-    # An event type, `<resource>.*`, `*`, or `{ "type" => ..., "filter" => { ... } }`.
     Subscription = T.type_alias { T.any(String, T::Hash[T.any(String, Symbol), T.untyped]) }
 
-    # Tests swap this out.
     class Connector
       extend(T::Sig)
 
@@ -31,7 +24,6 @@ module E621Stream
         Async::WebSocket::Client.connect(endpoint, &block)
       end
 
-      # Gets the websocket url from the site's /info, unless it's one already.
       sig { params(url: String).returns(String) }
       def websocket_url(url)
         return url if url.match?(%r{\Awss?://}i)
@@ -52,14 +44,12 @@ module E621Stream
     end
 
     HEARTBEAT_SECONDS = 30
-    # nothing at all from the server for this long (not even a heartbeat ack) and the connection's treated as dead
     SILENT_SECONDS = 75
     MAX_DELAY_SECONDS = 60
 
     sig { returns(Options) }
     attr_reader(:options)
 
-    # The newest event received, which reconnecting resumes from.
     sig { returns(T.nilable(String)) }
     attr_reader(:cursor)
 
@@ -83,27 +73,20 @@ module E621Stream
       @listeners = T.let(Hash.new { |hash, key| hash[key] = [] }, T::Hash[String, T::Array[Listener]])
       @connection = T.let(nil, T.untyped)
       @closing = T.let(false, T::Boolean)
-      # reconnects since the last ready, the backoff grows with it
       @attempt = T.let(0, Integer)
       @last_message = T.let(0.0, Float)
-      # the error op comes right before the close, it's kept until then so the close can say why
       @last_error = T.let(nil, T.nilable(StreamError))
       @ready = T.let(false, T::Boolean)
       @nonce = T.let(0, Integer)
-      # the callback and what's been received so far, big requests come back in chunks
       @pending_snapshots = T.let({}, T::Hash[String, [SnapshotCallback, Snapshots]])
     end
 
-    # Listens for an event type (like "post.create"), or one of :dispatch (every event), :ready, :replay_complete,
-    # :subscribed, :recovery, :slow_mode, :error, :close and :reconnecting.
     sig { params(name: T.any(String, Symbol), block: Listener).returns(T.self_type) }
     def on(name, &block)
       T.must(@listeners[name.to_s]) << block
       self
     end
 
-    # Connects and keeps the connection going until #close is called, or the server closes it for something
-    # reconnecting won't fix. Blocks, or runs as a task when called inside a reactor already.
     sig { void }
     def run
       @closing = false
@@ -118,7 +101,6 @@ module E621Stream
           break unless reconnecting
 
           @attempt += 1
-          # 1, 4, 9... seconds up to a minute, or 30 when rate limited, plus up to a second
           delay = code == CloseCodes::RATE_LIMITED ? 30 : [@attempt**2, MAX_DELAY_SECONDS].min
           delay += rand
           emit("reconnecting", { attempt: @attempt, delay: delay })
@@ -127,17 +109,12 @@ module E621Stream
       end
     end
 
-    # Replaces the current subscriptions, and keeps them for reconnecting.
     sig { params(subscriptions: T::Array[Subscription]).void }
     def subscribe(subscriptions)
       @options = Options.new(**options.serialize.transform_keys(&:to_sym), subscriptions: subscriptions)
       send_message({ op: "subscribe", d: { subscriptions: subscriptions } })
     end
 
-    # Looks up what was last seen of up to 1000 records, see https://e621.stream/snapshots/. The block gets them by id,
-    # nil for ones that aren't known. It isn't called if the connection closes first.
-    #
-    #   client.on(:ready) { client.snapshots("post", [1, 2]) { |posts| p(posts[1]&.dig("tags", "general")) } }
     sig { params(resource: String, ids: T::Array[Integer], block: SnapshotCallback).void }
     def snapshots(resource, ids, &block)
       raise("not ready") unless @ready
@@ -147,7 +124,6 @@ module E621Stream
       send_message({ op: "snapshot", d: { resource: resource, ids: ids, nonce: nonce } })
     end
 
-    # Closes the connection for good.
     sig { void }
     def close
       @closing = true
@@ -156,10 +132,8 @@ module E621Stream
 
     private
 
-    # one connection, start to finish. returns the close code & reason
     sig { returns([Integer, String]) }
     def connect_once
-      # fetched every time, so it can move
       @connector.connect(@connector.websocket_url(options.url)) do |connection|
         @connection = connection
         @last_message = now
@@ -173,11 +147,9 @@ module E621Stream
           heartbeat.stop
           @connection = nil
           @ready = false
-          # their blocks are never called, see #snapshots
           @pending_snapshots.clear
         end
       end
-      # anything but a normal close raises out of read
       [1000, ""]
     rescue Protocol::WebSocket::ClosedError => e
       [e.code || 1006, e.message]
@@ -200,7 +172,6 @@ module E621Stream
       end
     end
 
-    # every op the server sends, anything unknown is ignored
     sig { params(message: T::Hash[String, T.untyped]).void }
     def handle(message)
       data = message["d"]
@@ -226,11 +197,9 @@ module E621Stream
         emit("dispatch", event)
         emit(event.type, event)
       when "recovery"
-        # these are on the stream too, so they move the cursor
         @cursor = message["id"] if message["id"]
         emit("recovery", data)
       when "slow_mode"
-        # on the stream like recoveries
         @cursor = message["id"] if message["id"]
         emit("slow_mode", data)
       when "replay_complete"
@@ -241,9 +210,7 @@ module E621Stream
         pending = @pending_snapshots[data["nonce"]]
         return unless pending
 
-        # json keys are strings
         data["snapshots"].each { |id, snapshot| pending[1][id.to_i] = snapshot }
-        # older servers don't send done
         return if data["done"] == false
 
         @pending_snapshots.delete(data["nonce"])

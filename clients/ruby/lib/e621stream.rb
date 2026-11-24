@@ -12,6 +12,5 @@ loader.inflector.inflect({ "e621stream" => "E621Stream" })
 loader.ignore("#{__dir__}/e621stream/version.rb")
 loader.setup
 
-# A client for E621Stream, a live WebSocket stream of e621 activity. See https://e621.stream
 module E621Stream
 end

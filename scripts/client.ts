@@ -1,6 +1,3 @@
-// bun run client [--url ws://127.0.0.1:3621/ws] [--cursor <id>] [--pretty] [subscription...]
-// a bare bones client for testing a gateway, it identifies on hello and logs everything both ways. credentials come
-// from CLIENT_USER/CLIENT_KEY, or the ingester's. no subscriptions given is `*`
 import { parseArgs } from "node:util";
 
 const { positionals, values } = parseArgs({

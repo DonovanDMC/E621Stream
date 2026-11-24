@@ -5,13 +5,6 @@ import { e621BaseURL, egressProxies, logDir, logEvents, logRetentionDays } from 
 import { recordRequest } from "./latency.ts";
 import { count } from "./metrics.ts";
 
-// three kinds of log file, all `<name>-<yyyy-mm-dd>.log` in LOG_DIR:
-//  - <role>: a copy of stdout & stderr
-//  - requests-<role>: one line per request to e621
-//  - events-<role>: every event the gateway sent out, with how many clients got it
-// this is also where every fetch to e621 is counted and sent through an egress proxy, since it wraps fetch anyway
-
-// a file per utc day, old ones are deleted when a new day starts
 class DailyLog {
     private date = "";
     private stream: WriteStream | null = null;
@@ -39,7 +32,6 @@ class DailyLog {
     }
 }
 
-// writes still go to the terminal, a copy goes to the file a line at a time with a timestamp and colors taken out
 function tee(stream: NodeJS.WriteStream, log: DailyLog): void {
     const write = stream.write.bind(stream);
     let partial = "";
@@ -54,24 +46,18 @@ function tee(stream: NodeJS.WriteStream, log: DailyLog): void {
 function username(headers: Headers): string {
     const auth = headers.get("Authorization");
     if (!auth?.startsWith("Basic ")) return "-";
-    // never log the key
     return atob(auth.slice(6)).split(":")[0] ?? "-";
 }
 
-// a way out to e621, either direct or through an egress proxy
 export interface Route {
-    // a proxy that failed to connect is skipped until then
     downUntil: number;
     inFlight: number;
-    // the proxy's hostname up to the first dot, for logs & the status page
     name: string;
     proxy: string | null;
 }
 
 const ROUTE_DOWN_MS = 30_000;
 
-// direct shares an ip with everything else on the server, so it's only used when no proxies are working
-// otherwise the proxy with the fewest requests going, `turn` round robins between ties
 export function pickRoute(routes: Array<Route>, turn: number, now = Date.now()): Route {
     const proxies = routes.filter(route => route.proxy !== null && route.downUntil <= now);
     if (proxies.length === 0) return routes.find(route => route.proxy === null)!;
@@ -80,8 +66,6 @@ export function pickRoute(routes: Array<Route>, turn: number, now = Date.now()):
     return free[turn % free.length]!;
 }
 
-// replaces the global fetch. requests to e621 get a route, are counted for the status page, and logged. anything
-// else goes straight through untouched
 function watchRequests(role: string, log: DailyLog | null): void {
     const host = new URL(e621BaseURL).host;
     const original = globalThis.fetch;
@@ -109,15 +93,12 @@ function watchRequests(role: string, log: DailyLog | null): void {
         count(`requests.${role}`);
         count(`route.${route.name}`);
         try {
-            // `proxy` is a bun extension to fetch
             const res = await original(input, route.proxy ? { ...init, proxy: route.proxy } : init);
             line(String(res.status), false);
             if (res.status === 429) count(`ratelimited.${role}`);
             if (res.status >= 400) count(`failed.${role}`);
             return res;
         } catch (err) {
-            // only network errors & timeouts (E621_REQUEST_TIMEOUT_MS, from the e621 module) get here, an http error
-            // status still resolves. a timeout is e621 being slow, not the proxy being down
             const timedOut = err instanceof DOMException && err.name === "TimeoutError";
             if (route.proxy && !timedOut) route.downUntil = Date.now() + ROUTE_DOWN_MS;
             line(timedOut ? "timed out" : `failed (${String(err)})`, true);
@@ -127,11 +108,9 @@ function watchRequests(role: string, log: DailyLog | null): void {
             route.inFlight--;
         }
     };
-    // bun's fetch type has preconnect on it
     globalThis.fetch = Object.assign(logged, { preconnect: original.preconnect.bind(original) });
 }
 
-// whether log files can be written
 function openLogs(): boolean {
     if (!logDir) return false;
     try {
@@ -147,13 +126,10 @@ function openLogs(): boolean {
 
 let events: DailyLog | null = null;
 
-// sent is how many clients on this gateway got it
-// frame is a function so it's only built when event logging is on
 export function logEvent(frame: () => string, sent: number): void {
     events?.write(`${new Date().toISOString()} ${sent} ${frame()}\n`);
 }
 
-// fetch is wrapped even without log files, the routing & counting still need it
 export function startLogging(role: string): void {
     const files = openLogs();
     if (files && logEvents) events = new DailyLog(`events-${role}`);

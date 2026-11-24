@@ -1,12 +1,5 @@
 import { EVENT_TYPES, isEventType, isPrivateEventType, MOD_ACTION_EVENT_TYPES, PRIVATE_EVENT_TYPES, VERSION_EVENTS, type EventType, type PrivateEventType, type StreamEvent } from "../events.ts";
 
-// subscriptions. a subscription is an event type (exact, `post.*`, or `*`) and an optional filter. an event is sent
-// if any subscription matches it. within one filter every field given has to match (and), within a field any value
-// can match (or). pages/subscriptions.md has the user facing version
-// filters work on "facets", the ids/tags/etc. pulled out of an event, worked out once per event and shared by every
-// session
-
-// what clients send
 export interface Filter {
     actions?: Array<string>;
     pool_ids?: Array<number>;
@@ -22,17 +15,14 @@ export interface Subscription {
     type: string;
 }
 
-// e621 search syntax: `tag` all of these, `~tag` at least one of these, `-tag` none of these, rating:x / -rating:x
 interface TagQuery { all: Array<string>; any: Array<string>; none: Array<string>; notRatings: Set<string>; ratings: Set<string> | null }
 
-// a subscription turned into sets, so matching is cheap. null fields aren't filtered on
 export interface CompiledSubscription {
     actions: Set<string> | null;
     poolIds: Set<number> | null;
     postIds: Set<number> | null;
     privateTypes: Set<PrivateEventType>;
     setIds: Set<number> | null;
-    // what the client sent, echoed back in ready/subscribed
     source: Subscription;
     tags: TagQuery | null;
     topicIds: Set<number> | null;
@@ -40,7 +30,6 @@ export interface CompiledSubscription {
     userIds: Set<number> | null;
 }
 
-// what an event can be filtered on. a facet that's missing never matches a filter on it
 interface Facets {
     action?: string;
     poolIds?: Array<number>;
@@ -52,7 +41,6 @@ interface Facets {
     userIds: Array<number>;
 }
 
-// the message is sent to the client as the close reason
 export class FilterError extends Error {}
 
 const RATINGS: Record<string, string> = { s: "s", safe: "s", q: "q", questionable: "q", e: "e", explicit: "e" };
@@ -86,7 +74,6 @@ function idSet(name: string, value: unknown): Set<number> | null {
     return new Set(value as Array<number>);
 }
 
-// `*` is every public type, `x.*` is every type starting with `x.` (private ones too)
 function resolveTypes(type: string): { privateTypes: Set<PrivateEventType>; types: Set<EventType> } {
     if (type === "*") return { types: new Set(EVENT_TYPES), privateTypes: new Set() };
     if (type.endsWith(".*")) {
@@ -100,7 +87,6 @@ function resolveTypes(type: string): { privateTypes: Set<PrivateEventType>; type
     return { types: new Set([type]), privateTypes: new Set() };
 }
 
-// throws FilterError when it's invalid. a bare string is the same as { type }
 export function compile(input: unknown): CompiledSubscription {
     const sub = (typeof input === "string" ? { type: input } : input ?? {}) as Subscription;
     if (typeof sub !== "object" || typeof sub.type !== "string") throw new FilterError("invalid subscription");
@@ -129,11 +115,6 @@ export function compile(input: unknown): CompiledSubscription {
 const num = (v: unknown): number | undefined => typeof v === "number" ? v : undefined;
 const ints = (...values: Array<unknown>): Array<number> => values.filter((v): v is number => typeof v === "number");
 
-// most event types share their data shape with another, so they're mapped to that first:
-//  - mod action derived events -> mod_action.create
-//  - version derived updates -> the version's create
-//  - <resource>.update -> <resource>.create, using the record inside the data
-// post.update is its own since its data is { post, changes } and that's the same shape as post.create anyway
 function facetsOf(event: StreamEvent): Facets {
     let type: string = event.type, d = event.data;
     if (MOD_ACTION_EVENT_TYPES.has(event.type)) {
@@ -156,7 +137,6 @@ function facetsOf(event: StreamEvent): Facets {
             const event = (d.post_event ?? {}) as Record<string, unknown>;
             return { postIds: ints(post.id), poolIds: post.pools ?? [], userIds: ints(post.approver_id, event.creator_id), tags: post.tags ? new Set(Object.values(post.tags).flat()) : undefined, rating: post.rating };
         }
-        // tags is a space separated string here, it's the post's tags after the edit
         case "post_version.create":
             return { postIds: ints(d.post_id), userIds: ints(d.updater_id), tags: new Set((typeof d.tags === "string" ? d.tags : "").split(" ").filter(Boolean)), rating: d.rating as string };
         case "pool_version.create":
@@ -201,7 +181,6 @@ function facetsOf(event: StreamEvent): Facets {
     }
 }
 
-// the same event object goes to every session, so this is worked out once. weak so it goes with the event
 const facetCache = new WeakMap<StreamEvent, Facets>();
 function facets(event: StreamEvent): Facets {
     let f = facetCache.get(event);
@@ -209,7 +188,6 @@ function facets(event: StreamEvent): Facets {
     return f;
 }
 
-// events without tags never match a tag filter, even one that's only negations
 function matchTags(q: TagQuery, f: Facets): boolean {
     if (!f.tags) return false;
     if (q.ratings && (!f.rating || !q.ratings.has(f.rating))) return false;
@@ -221,7 +199,6 @@ function matchTags(q: TagQuery, f: Facets): boolean {
 
 export function matches(sub: CompiledSubscription, event: StreamEvent): boolean {
     if (!sub.types.has(event.type)) return false;
-    // no filter, no need for facets
     if (!sub.tags && !sub.postIds && !sub.poolIds && !sub.setIds && !sub.topicIds && !sub.userIds && !sub.actions) return true;
     const f = facets(event);
     if (sub.postIds && !f.postIds?.some(id => sub.postIds!.has(id))) return false;

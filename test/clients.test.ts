@@ -21,7 +21,6 @@ describe("clients", () => {
     test("the typescript client knows what every event is sent with", async () => {
         const source = await read("clients/typescript/lib/generated.ts");
         const keys = [...between(source, "export interface EventDataMap", "\n}").matchAll(/^ {4}"([a-z_]+\.[a-z_]+)":/gm)].map(match => match[1]!);
-        // bun run client-types
         expect(keys).toEqual([...EVENT_TYPES, ...PRIVATE_EVENT_TYPES]);
     });
 

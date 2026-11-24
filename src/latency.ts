@@ -4,17 +4,8 @@ import { discordWebhookURL, latencyAlertMS, latencyKey, oauthRedirectURI } from 
 import redis from "./redis.ts";
 import { getSlowMode } from "./slowMode.ts";
 
-// watches how long e621 takes to answer, and posts to DISCORD_WEBHOOK_URL when it's slow and when it recovers
-// every request to e621 is recorded by the fetch wrapper in logs.ts, only the ingester watches them (from
-// ingester/index.ts) since it makes nearly all of them. the time is until the headers came back, a timeout or
-// network error counts as the full timeout
-// it's elevated once the median over the last 5 minutes reaches LATENCY_ALERT_MS, and recovered after 3 checks in a
-// row under it, so it doesn't flap. the state is kept in redis so a restart doesn't post again, and the admin page
-// can show it
-
 const WINDOW_MS = 5 * 60_000;
 const CHECK_MS = 60_000;
-// fewer than this in the window (slow mode, a quiet restart) isn't enough to go on, the state is left as it is
 const MIN_SAMPLES = 10;
 const RECOVER_CHECKS = 3;
 
@@ -25,7 +16,6 @@ export interface Latency {
     p50: number;
     p90: number;
     requests: number;
-    // when it last went elevated or recovered
     since: string;
 }
 
@@ -68,14 +58,11 @@ async function post(title: string, color: number, latency: Latency, extra: strin
     if (!res.ok) throw new Error(`discord returned ${res.status}`);
 }
 
-// what the watch carries between checks. calm is how many checks in a row have been under the limit
 export interface LatencyState {
     calm: number;
     latency: Latency | null;
 }
 
-// the next state from the last 5 minutes of requests, pulled out of check() so it can be tested. change says whether
-// it just went elevated or recovered, elevatedAt is when it went elevated for a recovery
 export function evaluate(state: LatencyState, recent: Array<Sample>, now = new Date()): LatencyState & { change: "elevated" | "recovered" | null; elevatedAt?: string } {
     if (recent.length < MIN_SAMPLES) return { ...state, change: null };
     const sorted = recent.map(sample => sample.ms).sort((a, b) => a - b);

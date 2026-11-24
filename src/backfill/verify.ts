@@ -5,11 +5,6 @@ import { backfillQueue, e621, request } from "../e621.ts";
 import { snapshot, type Post } from "../ingester/posts.ts";
 import { pick, TRACKED, type Item, type Tracked } from "../ingester/updates.ts";
 
-// `bun run backfill verify`. compares stored snapshots with what e621 has now, to check the exports were turned into
-// the same thing the live feeds would build. it only logs, some differences are expected since the export is up to a
-// day old
-
-// sorted keys & arrays, empty arrays dropped, so order and [] vs missing don't count as differences
 function normalize(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(normalize).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
     if (value && typeof value === "object") {
@@ -19,7 +14,6 @@ function normalize(value: unknown): unknown {
     return value;
 }
 
-// logs how many differ per field, with one example each
 function compare(name: string, records: Array<{ current: Record<string, unknown>; id: number }>, stored: Map<number, Record<string, unknown>>): void {
     const mismatches = new Map<string, { count: number; example: string }>();
     let missing = 0, checked = 0;
@@ -43,7 +37,6 @@ function compare(name: string, records: Array<{ current: Record<string, unknown>
 }
 
 async function verifyPosts(): Promise<void> {
-    // random posts are mostly old, some will have changed since the export
     const posts = await request("verify posts", () => e621.posts.search({ tags: "order:random status:any", limit: 320 }), backfillQueue) as Array<unknown> as Array<Post>;
     const stored = await getSnapshots("post", posts.map(post => post.id));
     compare("posts", posts.map(post => ({ id: post.id, current: snapshot(post) as unknown as Record<string, unknown> })), stored);
@@ -55,7 +48,6 @@ async function verifyTracked(name: string, tracked: Tracked, search: () => Promi
     compare(name, items.map(item => ({ id: item.id, current: pick(tracked, item) })), stored);
 }
 
-// a page of random posts, and the oldest page of the rest (the least likely to have changed since the export)
 export async function verify(): Promise<void> {
     await verifyPosts();
     await verifyTracked("tag_aliases", TRACKED.tagAlias, () => e621.tagAliases.search({ limit: 320, page: "a0" }));

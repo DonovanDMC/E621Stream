@@ -4,7 +4,6 @@ import * as db from "../src/db.ts";
 import * as e621Module from "../src/e621.ts";
 import * as events from "../src/events.ts";
 
-// 1000 posts, one updated every minute, so a page of 320 is about 5 hours
 const from = Date.parse("2026-11-14T00:00:00Z"), to = from + 600 * 60_000;
 const posts = Array.from({ length: 1000 }, (_, i) => ({
     id: i + 1,
@@ -16,7 +15,6 @@ const posts = Array.from({ length: 1000 }, (_, i) => ({
     flags: {}, relationships: { children: [], parent_id: null }, score: { down: 0, total: 0, up: 0 }, tags: { general: [] },
 }));
 
-// what e621 would return for the searches the recovery makes
 function search({ tags, limit, page }: { limit: number; page: number; tags: string }): Array<typeof posts[number]> {
     if (tags === "status:any") return posts.toSorted((a, b) => b.id - a.id).slice(0, limit);
     if (tags.startsWith("status:any order:id_desc")) return [];
@@ -62,7 +60,6 @@ test("a posts recovery carries on from its checkpoint", async () => {
         },
     };
 
-    // stopped once the uploads, the probe and two pages are done, like a restart
     let stops = 0;
     const stopEarly = async (): Promise<void> => {
         if (++stops > 4) throw new Error("restart");
@@ -80,11 +77,9 @@ test("a posts recovery carries on from its checkpoint", async () => {
 
     const before = searches;
     const events = await new PostsFeed().recover(from, to, new Set(), async () => {}, checkpoint);
-    // only the page that was left, not the whole window again
     expect(searches - before).toBe(1);
     expect(fraction).toBe(1);
 
-    // everything updated in the window, sent once between the two runs
     const inWindow = posts.filter(p => Date.parse(p.updated_at) > from && Date.parse(p.updated_at) <= to).map(p => p.id);
     expect(published.toSorted((a, b) => a - b)).toEqual(inWindow);
     expect(events).toBe(inWindow.length);

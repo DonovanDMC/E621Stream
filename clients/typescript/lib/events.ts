@@ -1,6 +1,5 @@
 import type { EventDataMap } from "./generated.ts";
 
-// keep in sync with src/events.ts
 // the four lists here are rewritten by `bun run client-types` in the server repo, everything else is by hand
 
 export const EVENT_TYPES = [
@@ -97,8 +96,6 @@ export const EVENT_TYPES = [
 
 export type EventType = typeof EVENT_TYPES[number];
 
-/** Polled with your own credentials, these need to be subscribed to by name. */
-
 export const PRIVATE_EVENT_TYPES = [
     "dmail.create",
     "private_post_set.add_posts",
@@ -150,17 +147,13 @@ export const VERSION_EVENT_TYPES = [
 export type ModActionEventType = typeof MOD_ACTION_EVENT_TYPES[number];
 export type VersionEventType = typeof VERSION_EVENT_TYPES[number];
 
-/** The data for each event type, see https://e621.stream/events/ */
 export type EventData<T extends EventType | PrivateEventType> = EventDataMap[T];
 
 export type StreamEvent<T extends EventType | PrivateEventType = EventType | PrivateEventType> = T extends EventType | PrivateEventType ? {
     data: EventData<T>;
-    /** Pass this as `cursor` to resume after this event. Private events don't have one. */
     id: string;
     private?: true;
-    /** Sent late by a recovery, so it's out of order with the rest. See https://e621.stream/replaying/#recoveries */
     recovered?: true;
-    /** When it happened on e621. */
     time: string;
     type: T;
 } : never;
@@ -170,7 +163,6 @@ export interface Filter {
     pool_ids?: Array<number>;
     post_ids?: Array<number>;
     set_ids?: Array<number>;
-    /** An e621 style tag query, supporting `tag`, `-tag`, `~tag` and `rating:`. */
     tags?: string;
     topic_ids?: Array<number>;
     user_ids?: Array<number>;

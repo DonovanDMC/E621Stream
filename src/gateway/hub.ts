@@ -7,13 +7,8 @@ import { createRedis, type StreamEntry } from "../redis.ts";
 
 import { sessions } from "./session.ts";
 
-// reads the event stream as it's added to and offers everything to every session on this gateway
-// each gateway reads the whole stream on its own, there's no consumer group, so adding gateways is free for redis
-
-// for /health, /stats & the status page. notices don't count
 export const hubStats = { lastId: null as string | null, lastEventAt: null as string | null, received: 0 };
 
-// XREAD BLOCK holds the connection, so it gets its own
 const reader = createRedis();
 
 function fanOut(event: StreamItem): void {
@@ -22,8 +17,6 @@ function fanOut(event: StreamItem): void {
     logEvent(() => isNotice(event) ? noticeFrame(event) : dispatchFrame(event), sent);
 }
 
-// never returns. $ is "only what's added from now on", after that it's the last id read. anything older is only sent
-// to clients that ask for it with a cursor (replay in session.ts)
 export async function startHub(): Promise<void> {
     let lastId = "$";
     for (;;) {

@@ -3,7 +3,6 @@
 require("minitest/autorun")
 require("e621stream")
 
-# Plays the server's end of the connection from a script.
 class FakeConnection
   attr_reader(:sent)
 

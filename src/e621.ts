@@ -5,10 +5,6 @@ import { e621AuthKey, e621AuthRequestIntervalMS, e621AuthUser, e621BaseURL, e621
 import { recoveryContext } from "./recovery.ts";
 import redis from "./redis.ts";
 
-// everything that talks to e621 goes through here: the api clients, the request queues that keep us under the rate
-// limit, retries, and scrubbing anything private out of responses
-
-// a 401/403. these aren't retried, the caller decides what to do (feeds wait an hour, auth checks fail the login)
 export class AuthError extends Error {
     constructor(what: string, status: number) {
         super(`${what} returned ${status}`);
@@ -21,8 +17,6 @@ export const hasAuth = Boolean(e621AuthUser && e621AuthKey);
 // the module now assumes v2 is the default, but e621 still returns v1 unless asked
 const postFormat = { v1: true } as const;
 
-// the e621 module's own rate limit retrying is off, request() below does it so every queue behaves the same
-// its timeout carries on into reading the body, so one that stalls halfway is given up on too
 export function createClient(auth: Pick<Options, "authKey" | "authToken" | "authUser"> = {}): E621<typeof postFormat> {
     return new E621({
         ...auth,
@@ -36,24 +30,18 @@ export function createClient(auth: Pick<Options, "authKey" | "authToken" | "auth
 
 export type Client = ReturnType<typeof createClient>;
 
-// the ingester's client, logged in as E621_AUTH_USER
 export const e621 = createClient({ authUser: e621AuthUser, authKey: e621AuthKey });
 
-// for the few things only the html pages can do (see updatedCommentIds in ingester/updates.ts)
 export async function getHTML(url: string, query: Record<string, string | number>): Promise<string> {
     const res = await e621.client.get({ url, query, parseAs: "text" });
     if (!res.response?.ok) throw new UnexpectedResponseError(res.request, res.response, res.error);
     return res.data as string;
 }
 
-// requests one queue can have going at once, the interval still spaces out when they start
 const MAX_IN_FLIGHT = 2;
 
 export interface Scheduler { schedule<T>(fn: () => Promise<T>): Promise<T> }
 
-// every process shares one ip, so starts are reserved in redis
-// takes the later of now and the last reserved start + interval, stores it as the new last start, and returns it. the
-// caller waits until then. it's atomic, so two processes can't get the same slot
 const RESERVE = `
 local now = tonumber(ARGV[1])
 local start = math.max(now, tonumber(redis.call("GET", KEYS[1]) or "0") + tonumber(ARGV[2]))
@@ -64,15 +52,9 @@ async function reserve(): Promise<number> {
     return Number(await redis.send("EVAL", [RESERVE, "1", `${redisPrefix}:e621:last_request`, String(Date.now()), String(e621RequestIntervalMS)]));
 }
 
-// spaces out request starts by intervalMS, with at most MAX_IN_FLIGHT going at once. shared queues also reserve
-// their start in redis so every process together stays under the limit. every queue uses the same redis key and it's
-// always E621_REQUEST_INTERVAL_MS apart, intervalMS only spaces out this process's own requests on top of that
-// `background` is the same queue, but those only go when nothing in the foreground is waiting. the backfill and
-// recoveries use it so they never hold up the live feeds
 export class RequestQueue implements Scheduler {
     private inFlight = 0;
     private lastStart = 0;
-    // waiting on redis for a slot, nothing else starts until that's back
     private reserving = false;
     private timer: ReturnType<typeof setTimeout> | null = null;
     private waiting: Array<{ background: boolean; start(): void }> = [];
@@ -95,7 +77,6 @@ export class RequestQueue implements Scheduler {
         });
     }
 
-    // starts the next request if it can, otherwise waits until it can. called whenever something's added or finishes
     private pump(): void {
         if (this.timer || this.reserving || this.waiting.length === 0 || this.inFlight >= MAX_IN_FLIGHT) return;
         const wait = this.lastStart + this.intervalMS - Date.now();
@@ -113,7 +94,6 @@ export class RequestQueue implements Scheduler {
         this.reserving = true;
         void reserve()
             .then(start => start > Date.now() ? Bun.sleep(start - Date.now()) : undefined)
-            // no redis, only this process's requests get spaced out
             .catch(() => null)
             .then(() => {
                 this.reserving = false;
@@ -121,7 +101,6 @@ export class RequestQueue implements Scheduler {
             });
     }
 
-    // the oldest foreground request, or the oldest background one if there's none
     private startNext(): void {
         const foreground = this.waiting.findIndex(item => !item.background);
         const [next] = this.waiting.splice(foreground === -1 ? 0 : foreground, 1);
@@ -136,11 +115,8 @@ export class RequestQueue implements Scheduler {
     }
 }
 
-// the live feeds (foreground) and the backfill & recoveries (background)
 export const ingestQueue = new RequestQueue(e621RequestIntervalMS, true);
-// checking credentials and oauth, on the gateway
 export const authQueue = new RequestQueue(e621AuthRequestIntervalMS, true);
-// polling private events, on the gateway
 export const privateQueue = new RequestQueue(e621PrivateRequestIntervalMS, true);
 export const backfillQueue = ingestQueue.background;
 
@@ -150,20 +126,12 @@ function statusOf(err: unknown): number | null {
     return status !== null && status < 300 ? null : status;
 }
 
-// 2s, 4s, 8s... up to a minute, plus up to a second of jitter
 async function backoff(attempt: number, reason: string): Promise<void> {
     const ms = Math.min(2 ** attempt * 1000, 60_000) + Math.random() * 1000;
     Debug("e621", `retrying in ${Math.round(ms)}ms (${reason})`);
     await Bun.sleep(ms);
 }
 
-// runs fn through a queue with retries. `what` is only for logs & errors
-// - 401/403 throw AuthError right away
-// - 429 waits for retry-after (or 2^attempt seconds) and tries again
-// - other 4xx throw right away
-// - 5xx & network errors back off and try again
-// after `retries` attempts the last error is thrown. whatever comes back is scrubbed
-// recoveries go behind the live feeds
 export async function request<T>(what: string, fn: () => Promise<T>, queue: Scheduler = recoveryContext.getStore() ? backfillQueue : ingestQueue, retries = 5): Promise<T> {
     for (let attempt = 1; ; attempt++) {
         try {
@@ -187,7 +155,6 @@ export async function request<T>(what: string, fn: () => Promise<T>, queue: Sche
 
 // this all ends up public, drop anything that looks private just in case
 const SENSITIVE_KEYS = new Set(["ip_addr", "creator_ip_addr", "updater_ip_addr", "email", "last_ip_addr"]);
-// a deep copy with those keys dropped at any depth. the copy also turns class instances from the module into plain objects
 function scrub<T>(value: T): T {
     if (value === null || typeof value !== "object") return value;
     return strip(JSON.parse(JSON.stringify(value))) as T;

@@ -2,16 +2,10 @@ import { SQL } from "bun";
 
 import { databaseURL } from "./config.ts";
 
-// postgres. the main thing here is snapshots, the last known state of each record, which is what update events are
-// diffed against (e621 doesn't say what changed, so we have to remember what it was before)
 const sql = new SQL(databaseURL, { max: 4 });
 export default sql;
 
-// run by the ingester and the backfill cli on start. the oauth tables are in gateway/oauth.ts
 export async function migrate(): Promise<void> {
-    // resource is the e621 model ("post", "comment", "post_set", ...), data is only the fields that get diffed (see
-    // TRACKED in ingester/updates.ts, and Snapshot in ingester/posts.ts for posts). version is change_seq for posts,
-    // updated_at (ms) for everything else, so an older copy never overwrites a newer one
     await sql`
         CREATE TABLE IF NOT EXISTS snapshots (
             resource text NOT NULL,
@@ -21,7 +15,6 @@ export async function migrate(): Promise<void> {
             PRIMARY KEY (resource, id)
         )
     `;
-    // one row per backfill source, see backfill/state.ts
     await sql`
         CREATE TABLE IF NOT EXISTS backfill (
             source text PRIMARY KEY,
@@ -37,22 +30,18 @@ export async function migrate(): Promise<void> {
             updated_at timestamptz NOT NULL DEFAULT now()
         )
     `;
-    // added later, for crawls that go through several id ranges at once
     await sql`ALTER TABLE backfill ADD COLUMN IF NOT EXISTS lanes jsonb`;
-    // replacements are looked up by post when a post is expunged or a replacement is deleted
     await sql`CREATE INDEX IF NOT EXISTS snapshots_post_replacement_post ON snapshots (((data->>'post_id')::bigint)) WHERE resource = 'post_replacement'`;
 }
 
 export interface Snapshot { data: unknown; id: number; version: number }
 
-// id -> data, ids that aren't stored are left out
 export async function getSnapshots(resource: string, ids: Array<number>): Promise<Map<number, Record<string, unknown>>> {
     if (ids.length === 0) return new Map();
     const rows = await sql<Array<{ data: Record<string, unknown>; id: number | string }>>`SELECT id, data FROM snapshots WHERE resource = ${resource} AND id = ANY(${sql.array(ids, "INT8")})`;
     return new Map(rows.map(row => [Number(row.id), row.data]));
 }
 
-// upserts in one query, a row is only replaced by one with the same or a higher version
 export async function putSnapshots(resource: string, snapshots: Array<Snapshot>): Promise<void> {
     if (snapshots.length === 0) return;
     // postgres errors if the same row is in one insert twice
@@ -70,7 +59,6 @@ export async function putSnapshots(resource: string, snapshots: Array<Snapshot>)
     `;
 }
 
-// every stored replacement for a post, by replacement id
 export async function getReplacementSnapshots(postId: number): Promise<Map<number, Record<string, unknown>>> {
     const rows = await sql<Array<{ data: Record<string, unknown>; id: number | string }>>`SELECT id, data FROM snapshots WHERE resource = 'post_replacement' AND (data->>'post_id')::bigint = ${postId}`;
     return new Map(rows.map(row => [Number(row.id), row.data]));
@@ -81,8 +69,6 @@ export async function deleteSnapshots(resource: string, ids: Array<number>): Pro
     await sql`DELETE FROM snapshots WHERE resource = ${resource} AND id = ANY(${sql.array(ids, "INT8")})`;
 }
 
-// the posts export writes huge batches while the live feeds are writing too, a deadlock there is retried with a
-// growing wait instead of failing the whole import
 export async function retryDeadlocks<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
     for (let attempt = 1; ; attempt++) {
         try {
@@ -95,7 +81,6 @@ export async function retryDeadlocks<T>(fn: () => Promise<T>, attempts = 5): Pro
     }
 }
 
-// the snapshot version for anything that isn't a post, 0 when there's no updated_at
 export const versionOf = (item: { updated_at?: string | null }): number => {
     const time = Date.parse(item.updated_at ?? "");
     return Number.isNaN(time) ? 0 : time;

@@ -17,18 +17,6 @@ import { PROTOCOL_VERSION } from "./protocol.ts";
 import { connectionCount, Session, sessions, type SocketData } from "./session.ts";
 import { status, statusPage } from "./status.ts";
 
-// the gateway, the public side. there can be several, each one reads the whole stream itself (hub.ts) and they share
-// state through redis. routes:
-//  /ws            the websocket, see session.ts for the protocol
-//  /info          what's needed to connect: version, url, event types, compression
-//  /health        for load balancers
-//  /status(.json) the status page
-//  /stats         this gateway's connections & events
-//  /admin         admin.ts
-//  /authorize     oauth.ts, making stream tokens
-//  anything else  the docs from pages/
-
-// behind a proxy every connection would look like it's from the proxy
 function clientIP(req: Request, server: Bun.Server<SocketData>): string {
     if (trustProxy) {
         const forwarded = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
@@ -39,7 +27,6 @@ function clientIP(req: Request, server: Bun.Server<SocketData>): string {
 
 let pages: Promise<Map<string, string>> | null = null;
 
-// /events goes to /events/, null for anything that isn't a page
 async function servePage(pathname: string): Promise<Response | null> {
     pages ??= renderPages();
     const rendered = await pages;
@@ -49,7 +36,6 @@ async function servePage(pathname: string): Promise<Response | null> {
     return null;
 }
 
-// open cors, so browser clients can read /info & co
 const json = (body: unknown, status = 200): Response => Response.json(body, { status, headers: { "Access-Control-Allow-Origin": "*" } });
 
 export function startGateway(): void {
@@ -78,8 +64,6 @@ export function startGateway(): void {
                         if (!isCompressionType(compress)) return json({ error: `compress must be one of ${COMPRESSION_TYPES.join(", ")}` }, 400);
                         compression = compress;
                     }
-                    // credentials can come in the header or in identify, the header's only used if identify has none.
-                    // it's parsed here since the headers are gone after the upgrade
                     const headerAuth = parseAuthHeader(req.headers.get("authorization"));
                     if (srv.upgrade(req, { data: { ip, compression, headerAuth } })) return;
                     return json({ error: "expected a websocket upgrade" }, 426);
@@ -126,7 +110,6 @@ export function startGateway(): void {
                         });
             }
         },
-        // client messages are small, 64kb is plenty. bun pings and drops connections that are quiet for 2 minutes
         websocket: {
             data: {} as SocketData,
             perMessageDeflate: true,
@@ -150,15 +133,12 @@ export function startGateway(): void {
     });
 
     if (oauthEnabled) void migrateOAuth().catch((err: unknown) => { Debug("gateway:oauth", `couldn't create the tables: ${String(err)}`); });
-    // rendered up front so a broken page shows up in the logs on start
     pages = renderPages();
     pages.catch((err: unknown) => { Debug("gateway", `couldn't render the docs: ${String(err)}`); });
     void startHub();
     void startPrivate().catch((err: unknown) => { Debug("gateway:private", `couldn't start: ${String(err)}`); });
     void startModeration().catch((err: unknown) => { Debug("gateway:admin", `couldn't start: ${String(err)}`); });
     startPresence();
-    // catches removed tokens, regenerated api keys & bans on e621. verify() caches, so this only goes to e621 every
-    // AUTH_CACHE_SECONDS per user
     setInterval(() => {
         for (const session of sessions) void session.recheckAuth().catch(() => null);
     }, 60_000);

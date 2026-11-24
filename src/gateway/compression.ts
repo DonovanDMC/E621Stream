@@ -1,6 +1,5 @@
 import zlib from "node:zlib";
 
-// optional compression, picked with ?compress= on /ws. pages/compression.md has how clients decompress it
 export const COMPRESSION_TYPES = ["zlib-stream", "zstd-stream"] as const;
 export type CompressionType = typeof COMPRESSION_TYPES[number];
 
@@ -8,16 +7,11 @@ export function isCompressionType(value: string): value is CompressionType {
     return (COMPRESSION_TYPES as ReadonlyArray<string>).includes(value);
 }
 
-// same idea as discord's zlib-stream, one context per connection, every frame has to go through the same decompressor
-// each message is written and flushed (not ended), so it comes out as a complete frame the client can decompress
-// right away, while the compression context carries over between messages
 export class StreamCompressor {
-    // compress calls run one at a time in order, so frames can't get mixed up
     private chain: Promise<unknown> = Promise.resolve();
     private chunks: Array<Buffer> = [];
     private flushFlag: number;
     private stream: zlib.Deflate | zlib.ZstdCompress;
-    // bytes waiting to be compressed, counted towards the slow consumer limit
     pending = 0;
 
     constructor(type: CompressionType) {

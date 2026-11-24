@@ -16,11 +16,6 @@ import { PAGE_CSS } from "./status.ts";
 
 import type { ListedClient } from "./presence.ts";
 
-// /admin, for whoever's in ADMIN_USER_IDS. lists every client on every gateway (from presence.ts), drops & bans them
-// (moderation.ts), turns slow mode on & off (../slowMode.ts), and starts/cancels recoveries. login is with an e621 api key, or oauth when that's set up
-// it's all plain post forms, most redirect back to /admin when they're done
-
-// password style logins an ip gets per window
 const MAX_ATTEMPTS = 10;
 const ATTEMPT_WINDOW_SECONDS = 600;
 
@@ -31,7 +26,6 @@ const esc = (value: number | string | null | undefined): string => String(value 
 const optional = (value: string | null | undefined): string | null => value?.trim() ? value.trim() : null;
 const redirect = (headers: Record<string, string> = {}): Response => new Response(null, { status: 303, headers: { Location: "/admin", ...headers } });
 
-// who's logged in, if anyone
 async function current(req: Request, ip: string): Promise<Admin | null> {
     const value = sessionToken(req);
     if (!value) return null;
@@ -41,7 +35,6 @@ async function current(req: Request, ip: string): Promise<Admin | null> {
         return null;
     }
     const admin = JSON.parse(raw) as Admin;
-    // ADMIN_USER_IDS can change while someone's logged in
     if (adminUserIDs.has(admin.id)) return admin;
     Debug("gateway:admin", `${admin.name} #${admin.id} from ${ip} is logged in, but isn't in ADMIN_USER_IDS anymore`);
     await redis.del(sessionKey(value));
@@ -118,7 +111,6 @@ function ago(iso: string): string {
 
 const button = (action: string, fields: Record<string, string | number>, label: string, confirm?: string): string => `<form class="inline" method="post" action="/admin/${action}"${confirm ? ` data-confirm="${esc(confirm)}" onsubmit="return confirm(this.dataset.confirm)"` : ""}>${Object.entries(fields).map(([name, value]) => `<input type="hidden" name="${name}" value="${esc(value)}">`).join("")}<button type="submit" class="bad">${label}</button></form>`;
 
-// a client's subscriptions, filters fold out and anything past 3 is behind a "more" toggle (css only)
 function subscriptions(id: string, list: ListedClient["subscriptions"]): string {
     if (list.length === 0) return "<span class=\"dim\">none</span>";
     const items = list.map(sub => sub.filter ? `<details class="filter"><summary><code>${esc(sub.type)}</code></summary><code>${esc(JSON.stringify(sub.filter))}</code></details>` : `<code>${esc(sub.type)}</code>`);
@@ -126,7 +118,6 @@ function subscriptions(id: string, list: ListedClient["subscriptions"]): string 
     return `<div class="subs"><input type="checkbox" id="subs-${esc(id)}">${items.slice(0, 3).join("<br>")}<div class="more">${items.slice(3).join("<br>")}</div><label for="subs-${esc(id)}" data-more="${items.length - 3} more"></label></div>`;
 }
 
-// an iso time, or how long ago (90m, 6h, 2d)
 function parseTime(value: string | null, fallback: Date): Date {
     const text = value?.trim() ?? "";
     if (text === "") return fallback;
@@ -135,7 +126,6 @@ function parseTime(value: string | null, fallback: Date): Date {
     return new Date(text);
 }
 
-// the last recovery, and the form for a new one when nothing's running
 function recoverySection(recovery: Recovery | null): string {
     const current = recovery ? `<p>${esc(recovery.id)}: <span class="${recovery.status === "done" ? "ok" : recovery.status === "failed" ? "bad" : isActive(recovery) ? "run" : "dim"}">${recovery.status}</span>, ${esc(recovery.from)} to ${esc(recovery.to)}, ${recovery.events} event(s). Requested by ${esc(recovery.requested_by)} <span title="${esc(recovery.requested_at)}">${ago(recovery.requested_at)}</span>.${recovery.error ? ` <span class="bad">${esc(recovery.error)}</span>` : ""}</p>
 ${isActive(recovery) ? button("recovery/cancel", {}, "Cancel", "Cancel the recovery? What's been sent so far stays sent.") : ""}
@@ -163,7 +153,6 @@ ${RECOVERABLE.map(name => `<label><input type="checkbox" name="source" value="${
 </form>`;
 }
 
-// how e621's request times look (../latency.ts), and the slow mode toggle
 function slowSection(latency: Latency | null, mode: SlowMode | null): string {
     const times = latency
         ? `<p>Median <span class="${latency.elevated ? "bad" : "ok"}">${latency.p50}ms</span>, p90 ${latency.p90}ms over the 5 minutes before <span title="${esc(latency.checked_at)}">${ago(latency.checked_at)}</span> (${latency.requests} requests, ${latency.failed} failed). ${latency.elevated ? `<span class="bad">Elevated</span> since` : "Normal since"} <span title="${esc(latency.since)}">${ago(latency.since)}</span>.</p>`
@@ -180,7 +169,6 @@ ${times}
 ${toggle}`;
 }
 
-// notice is shown at the top, it's how form errors come back too
 async function adminPage(admin: Admin, notice?: string): Promise<Response> {
     const [lists, bans, recovery, latency, mode] = await Promise.all([redis.send("HVALS", [clientListKey]) as Promise<Array<string>>, listBans(), getRecovery(), getLatency(), getSlowMode()]);
     const clients = lists.flatMap(list => JSON.parse(list) as Array<ListedClient>).sort((a, b) => a.connected_at.localeCompare(b.connected_at));
@@ -218,7 +206,6 @@ ${slowSection(latency, mode)}
 ${recoverySection(recovery)}`);
 }
 
-// username & api key, checked like a websocket connection would be. a success resets the attempt count
 async function login(req: Request, ip: string): Promise<Response> {
     const attempts = `${redisPrefix}:admin_attempts:${ip}`;
     const count = await redis.incr(attempts);
@@ -258,7 +245,6 @@ async function login(req: Request, ip: string): Promise<Response> {
     return redirect({ "Set-Cookie": setCookie });
 }
 
-// name is the path after /admin/. bad input just shows the page again
 async function action(req: Request, admin: Admin, name: string): Promise<Response> {
     const body = await form(req);
     switch (name) {
@@ -278,7 +264,6 @@ async function action(req: Request, admin: Admin, name: string): Promise<Respons
             return redirect();
         }
         case "recovery": {
-            // from has no default, so leaving it empty gives an invalid date and requestRecovery refuses it
             const picked = body.getAll("source").filter(name => RECOVERABLE.includes(name));
             const result = await requestRecovery(parseTime(body.get("from"), new Date(Number.NaN)), parseTime(body.get("to"), new Date()), picked, admin.name);
             if (typeof result === "string") return adminPage(admin, result);
@@ -313,7 +298,6 @@ async function action(req: Request, admin: Admin, name: string): Promise<Respons
     }
 }
 
-// every /admin request, from index.ts
 export async function handleAdmin(req: Request, ip: string): Promise<Response> {
     const { pathname } = new URL(req.url);
     if (pathname === "/admin/login" && req.method === "POST") return login(req, ip);

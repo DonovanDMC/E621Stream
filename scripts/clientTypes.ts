@@ -1,9 +1,3 @@
-// bun run client-types
-// regenerates what the clients need from the server, so they can't drift:
-//  - clients/typescript/lib/generated.ts: e621 record types, mod action values, and the data each event type has
-//  - the event type lists in clients/typescript/lib/events.ts
-//  - clients/ruby/lib/e621stream/events.rb
-// run it after changing event types, TRACKED or UPDATES. it fetches mod_action.rb from github, so it needs network
 import { dirname, resolve } from "node:path";
 
 import ts from "typescript";
@@ -15,7 +9,6 @@ const root = resolve(import.meta.dir, "../");
 const out = resolve(root, "clients/typescript/lib/generated.ts");
 const MOD_ACTION_SOURCE = "https://raw.githubusercontent.com/e621ng/e621ng/master/app/models/mod_action.rb";
 
-// resource -> its type name in e621-openapi. every resource an event is about needs to be here
 const RECORDS: Record<string, string> = {
     artist: "Artist",
     artist_url: "ArtistURL",
@@ -54,10 +47,7 @@ const RECORDS: Record<string, string> = {
     wiki_page_version: "WikiPageVersion",
 };
 
-// copies the wanted type aliases out of e621-openapi's .d.ts, along with everything they reference, as source text
-// ModAction & UploadKarmaEvent are left out, they're defined below instead
 function extractRecords(): string {
-    // the e621-openapi version the e621 module uses
     const path = Bun.resolveSync("e621-openapi/types", dirname(Bun.resolveSync("e621/package.json", root))).replace(/\.js$/, ".d.ts");
     const source = ts.createSourceFile(path, ts.sys.readFile(path)!, ts.ScriptTarget.Latest, true);
     const aliases = new Map<string, ts.TypeAliasDeclaration>();
@@ -84,13 +74,10 @@ function extractRecords(): string {
 }
 
 const RUBY_TYPES: Record<string, string> = { integer: "number", string: "string", boolean: "boolean", datetime: "string" };
-// where what's sent differs from mod_action.rb
 const VALUE_OVERRIDES: Record<string, Record<string, string>> = {
     user_flags_change: { added: "Array<string>", removed: "Array<string>" },
 };
 
-// mod_action.rb has a hash of every action and the values it's logged with, like `    tag_destroy: { tag_name: :string },`
-// that's scraped with a regex into an interface of action -> values
 async function modActionValues(): Promise<string> {
     const source = await (await fetch(MOD_ACTION_SOURCE)).text();
     const lines: Array<string> = [];
@@ -103,8 +90,6 @@ async function modActionValues(): Promise<string> {
     return `export interface ModActionValues {\n${lines.sort().join("\n")}\n}`;
 }
 
-// event type -> the type of its data. it works it out the same way the ingester decides what to publish, and throws
-// for a type it can't, so a new event type can't be forgotten here
 function eventMap(): string {
     const modActions = new Map<string, Array<string>>();
     for (const [action, event] of Object.entries(MOD_ACTION_EVENTS)) modActions.set(event!, [...modActions.get(event!) ?? [], action]);
@@ -147,7 +132,6 @@ function eventMap(): string {
     return `/** The \`data\` each event type is sent with. */\nexport interface EventDataMap {\n${lines.join("\n")}\n}`;
 }
 
-// resource -> what the snapshot op gives back, the tracked fields plus id
 function snapshotMap(): string {
     const lines = ["    post: PostSnapshot;"];
     for (const tracked of Object.values(TRACKED)) {
@@ -186,7 +170,6 @@ export type Update<Resource extends string, R, Field extends keyof R & string> =
 await Bun.write(out, `${body.join("\n\n")}\n`);
 console.log(`wrote ${out}`);
 
-// the lists in the typescript client's events.ts are replaced in place, the rest of that file is hand written
 const modActionEvents = [...new Set(Object.values(MOD_ACTION_EVENTS) as Array<string>)].sort();
 const versionEvents = Object.keys(VERSION_EVENTS).sort();
 const tsList = (name: string, types: ReadonlyArray<string>): string => `export const ${name} = [\n${types.map(type => `    "${type}",\n`).join("")}] as const;`;
@@ -198,7 +181,6 @@ for (const [name, types] of [["EVENT_TYPES", EVENT_TYPES], ["PRIVATE_EVENT_TYPES
 await Bun.write(eventsPath, events);
 console.log(`wrote ${eventsPath}`);
 
-// wraps a %w[] list to rubocop's line length. the ruby file is written whole
 const words = (types: ReadonlyArray<string>, indent: string): string => {
     const lines: Array<string> = [];
     let line = "";

@@ -2,7 +2,6 @@
 # typed: strict
 
 module E621Stream
-  # Why the server closed the connection, see https://e621.stream/close-codes/
   module CloseCodes
     UNKNOWN_ERROR = 4000
     UNKNOWN_OP = 4001
@@ -19,7 +18,6 @@ module E621Stream
     DISCONNECTED = 4012
     BANNED = 4013
 
-    # Closing for any of these again would just get the same result, so they aren't reconnected from.
     FATAL = T.let([UNKNOWN_OP, DECODE_ERROR, AUTHENTICATION_FAILED, ALREADY_IDENTIFIED, INVALID_SUBSCRIPTION, INVALID_CURSOR, AUTHENTICATION_EXPIRED, DISCONNECTED, BANNED].freeze, T::Array[Integer])
   end
 end

@@ -6,13 +6,11 @@ import { Marked } from "marked";
 import { gitCommit, repositoryURL } from "./config.ts";
 import { NAV, NAV_CSS, navHTML, type NavLink } from "./nav.ts";
 
-// the docs site. every pages/*.md is rendered into pages/template.html once, when the gateway first needs it
 export const pagesDir = resolve(import.meta.dir, "../pages");
 
 const escapeHTML = (value: string): string => value.replaceAll(/[&<>"']/g, char => `&#${char.codePointAt(0)};`);
 const slug = (text: string): string => text.toLowerCase().replaceAll(/[^\w\s-]/g, "").trim().replaceAll(/\s+/g, "-");
 
-// headings get ids so they can be linked to (/replaying/#recoveries), tables get wrapped so they scroll on phones
 const marked = new Marked({
     renderer: {
         heading({ depth, text, tokens }): string {
@@ -24,13 +22,11 @@ const marked = new Marked({
     },
 });
 
-/** Renders `pages/<name>.md` to `/<name>/` (and `index.md` to `/`), keyed by path. */
 export async function renderPages(): Promise<Map<string, string>> {
     const files = (await readdir(pagesDir)).filter(file => file.endsWith(".md"));
     const pages = await Promise.all(files.map(async (file) => {
         const name = basename(file, ".md");
         const source = await Bun.file(join(pagesDir, file)).text();
-        // the first h1
         const title = /^# (.+)$/m.exec(source)?.[1] ?? name;
         return { name, title, href: name === "index" ? "/" : `/${name}/`, content: await marked.parse(source) };
     }));

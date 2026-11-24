@@ -1,13 +1,9 @@
-// the header links on every page, the docs (pages.ts) and the status/admin/token pages all use it
-
 export interface NavLink {
     href: string;
-    // the pages/<page>.md it's for, links without one are the pages the gateway builds itself
     page?: string;
     title: string;
 }
 
-// in this order, docs pages that aren't listed get added after (sorted by title)
 export const NAV: Array<NavLink> = [
     { href: "/", page: "index", title: "Overview" },
     { href: "/subscriptions/", page: "subscriptions", title: "Subscriptions" },
@@ -23,7 +19,6 @@ export const NAV: Array<NavLink> = [
 
 const escapeHTML = (value: string): string => value.replaceAll(/[&<>"']/g, char => `&#${char.codePointAt(0)};`);
 
-// active is the href of the page it's on
 export function navHTML(links: Array<NavLink>, active: string): string {
     const items = links.map(link => link.href === active
         ? `<a href="${link.href}" class="active" aria-current="page">${escapeHTML(link.title)}</a>`

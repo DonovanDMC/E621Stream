@@ -1,4 +1,3 @@
-// only has to compile
 import { expect, test } from "bun:test";
 
 import { E621Stream, type Comment, type LegacyPost, type StreamEvent } from "../lib/index.ts";

@@ -4,8 +4,6 @@ import { dataKey } from "../config.ts";
 import sql from "../db.ts";
 import redis from "../redis.ts";
 
-// how many snapshots are stored per resource, for the "Data" table on the status page. it's a full count over a big
-// table, so it's done here every few minutes and stored in redis instead of on every status page load
 const INTERVAL_MS = 5 * 60_000;
 
 export interface DataCounts {
