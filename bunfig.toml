@@ -1,0 +1,4 @@
+[test]
+# the clients have their own tests
+root = "test"
+preload = ["./test/setup.ts"]

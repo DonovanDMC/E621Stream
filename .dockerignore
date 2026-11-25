@@ -1,0 +1,6 @@
+*
+!src
+!db/migrations
+!package.json
+!bun.lock
+!tsconfig.json

@@ -1,0 +1,21 @@
+.status-chart {
+    display: block;
+    width: 100%;
+    height: 64px;
+    margin-top: 12px;
+    fill: var(--bs-info);
+
+    .failed {
+        fill: var(--bs-danger);
+    }
+}
+
+// so the numbers don't shift around as they refresh
+.status-value {
+    font-variant-numeric: tabular-nums;
+}
+
+// table-danger is too bright on the dark theme
+.status-failing > td {
+    --bs-table-bg: rgba(var(--bs-danger-rgb), 0.15);
+}

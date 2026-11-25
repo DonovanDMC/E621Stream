@@ -1,0 +1,15 @@
+name: Test
+permissions:
+    contents: read
+on: [push, pull_request, workflow_call]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+            # compose reads it for the other services, the tests set everything they need themselves
+            - run: cp .env.example .env
+            - run: docker compose run --rm --build tests
+            - if: always()
+              run: docker compose --profile test down -v
