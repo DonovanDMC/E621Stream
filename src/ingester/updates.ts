@@ -2,13 +2,12 @@ import Debug from "@yiffy/debug";
 
 import { cursorKey } from "../config.ts";
 import { deleteSnapshots, getSnapshots, putSnapshots, versionOf, type Snapshot } from "../db.ts";
-import { e621, getHTML, request } from "../e621.ts";
+import { e621, request } from "../e621.ts";
 import { publish, type EventType } from "../events.ts";
 import redis from "../redis.ts";
 
 export interface Item { created_at?: string | null; id: number; updated_at?: string | null }
-interface SearchOptions { ids?: Array<number>; limit: number; page: number }
-interface IdsOptions { limit: number; page: number; since: Date | null }
+interface SearchOptions { limit: number; page: number }
 type Changes = Record<string, { new: unknown; old: unknown }>;
 
 export interface Tracked {
@@ -25,7 +24,6 @@ export interface UpdateSource extends Tracked {
     name: string;
     pages: number;
     unknownChanges: boolean;
-    ids?(options: IdsOptions): Promise<Array<number>>;
     private?(item: Item): boolean;
     search(options: SearchOptions): Promise<Array<Item> | null>;
 }
@@ -49,22 +47,11 @@ const LIMIT = 320;
 const MAX_PAGE = 750;
 const OVERLAP_MS = 5000;
 const CREATION_SLACK_MS = 2000;
-const FIRST_RUN_MS = 10 * 60_000;
-
-// comments.json 403s when ordering by updated_at, the html page doesn't
-// https://github.com/e621ng/e621ng/issues/2298
-async function updatedCommentIds({ limit, page, since }: IdsOptions): Promise<Array<number>> {
-    const from = since ?? new Date(Date.now() - FIRST_RUN_MS);
-    const html = await getHTML("/comments", { "group_by": "comment", limit, page, "search[order]": "updated_at_desc", "search[updated_at]": `${from.toISOString()}..` });
-    return [...new Set(Array.from(html.matchAll(/data-comment-id="(\d+)"/g), m => Number(m[1])))];
-}
 
 export const isPrivateSet = (item: Item): boolean => !(item as { is_public?: boolean }).is_public;
 
-const ids = (options: SearchOptions): string | undefined => options.ids?.join(",");
-
 export const UPDATES: Array<UpdateSource> = [
-    { ...TRACKED.comment, name: "comment_updates", event: "comment.update", mode: "ordered", pages: 5, intervalMS: 30_000, unknownChanges: true, ids: updatedCommentIds, search: o => e621.comments.search({ limit: o.limit, id: ids(o), group_by: "comment" }) },
+    { ...TRACKED.comment, name: "comment_updates", event: "comment.update", mode: "ordered", pages: 5, intervalMS: 30_000, unknownChanges: true, search: o => e621.comments.search({ ...o, group_by: "comment", order: "updated_at_desc" }) },
     // forum posts ignore updated_at ordering, so recent ones are rescanned
     // https://github.com/e621ng/e621ng/pull/2716
     { ...TRACKED.forumPost, name: "forum_post_updates", event: "forum_post.update", mode: "window", pages: 1, intervalMS: 30_000, unknownChanges: false, search: o => e621.forumPosts.search(o) },
@@ -109,18 +96,9 @@ export class UpdateFeed {
     private maxId: number | null = null;
     constructor(readonly source: UpdateSource) {}
 
-    private async fetch(page: number, since: Date | null = null): Promise<{ full: boolean; items: Array<Item> }> {
-        const { source } = this;
-        if (!source.ids) {
-            const items = await request(source.name, () => source.search({ limit: LIMIT, page })) ?? [];
-            return { items, full: items.length === LIMIT };
-        }
-        const ids = await request(`${source.name} ids`, () => source.ids!({ limit: LIMIT, page, since }));
-        if (ids.length === 0) return { items: [], full: false };
-        const items = await request(source.name, () => source.search({ limit: LIMIT, page: 1, ids })) ?? [];
-        const order = new Map(ids.map((id, i) => [id, i]));
-        items.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
-        return { items, full: ids.length === LIMIT };
+    private async fetch(page: number): Promise<{ full: boolean; items: Array<Item> }> {
+        const items = await request(this.source.name, () => this.source.search({ limit: LIMIT, page })) ?? [];
+        return { items, full: items.length === LIMIT };
     }
 
     private async pollOrdered(): Promise<number> {
@@ -144,7 +122,7 @@ export class UpdateFeed {
         const found: Array<Item> = [];
         let caughtUp = false;
         for (let page = 1; page <= this.source.pages && !caughtUp; page++) {
-            const { full, items } = await this.fetch(page, new Date(since));
+            const { full, items } = await this.fetch(page);
             for (const item of items) {
                 if (Date.parse(item.updated_at ?? "") <= since) {
                     caughtUp = true;
@@ -252,7 +230,7 @@ export class UpdateFeed {
         const found: Array<Item> = [];
         for (let page = 1; page <= MAX_PAGE; page++) {
             await stop();
-            const { full, items } = await this.fetch(page, new Date(from));
+            const { full, items } = await this.fetch(page);
             let done = !full;
             for (const item of items) {
                 const at = Date.parse(item.updated_at ?? "");

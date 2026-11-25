@@ -62,7 +62,7 @@ Everything else is compared against the last copy we saw. `data` is `{ <resource
 | `news_update.update` | `message` | newest 320, every 2 minutes |
 | `help_page.update` | `name`, `title`, `wiki_page`, `related` | all of them, every 2 minutes. The text is in the wiki page, so text edits are `wiki_page.update` |
 
-"newest 320" ones can't be sorted by `updated_at`, so anything older than that won't be caught. `changes` is `null` for comments, tag requests, BURs & replacements we didn't know about before. `comments.json` doesn't allow sorting by `updated_at` ([e621ng#2298](https://github.com/e621ng/e621ng/issues/2298)), so updated comments are found through the html listing.
+"newest 320" ones can't be sorted by `updated_at`, so anything older than that won't be caught. `changes` is `null` for comments, tag requests, BURs & replacements we didn't know about before.
 
 ### From mod actions
 Only staff can edit feedback & bans, so `user_feedback.update` and `ban.update` come from the [mod action log](#mod-action-events).

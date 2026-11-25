@@ -32,12 +32,6 @@ export type Client = ReturnType<typeof createClient>;
 
 export const e621 = createClient({ authUser: e621AuthUser, authKey: e621AuthKey });
 
-export async function getHTML(url: string, query: Record<string, string | number>): Promise<string> {
-    const res = await e621.client.get({ url, query, parseAs: "text" });
-    if (!res.response?.ok) throw new UnexpectedResponseError(res.request, res.response, res.error);
-    return res.data as string;
-}
-
 const MAX_IN_FLIGHT = 2;
 
 export interface Scheduler { schedule<T>(fn: () => Promise<T>): Promise<T> }
