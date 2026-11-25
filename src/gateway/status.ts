@@ -352,7 +352,7 @@ ${modelRows}
 
 <h2>Feeds</h2>
 <div class="table-wrap"><table>
-<tr><th>feed</th><th>every</th><th>last poll</th><th>events since start</th><th>last failure</th></tr>
+<tr><th>feed</th><th>every</th><th>last poll</th><th>events published</th><th>last failure</th></tr>
 ${feedRows}
 </table></div>
 

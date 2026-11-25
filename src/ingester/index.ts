@@ -30,10 +30,19 @@ export interface FeedHealth {
     published: number;
 }
 
-function run(feed: Pollable): void {
+function parseHealth(stored: string | undefined): Partial<FeedHealth> {
+    if (!stored) return {};
+    try {
+        return JSON.parse(stored) as Partial<FeedHealth>;
+    } catch {
+        return {};
+    }
+}
+
+function run(feed: Pollable, stored: Partial<FeedHealth>): void {
     const { name, intervalMS } = feed.source;
     const interval = intervalMS * pollIntervalScale;
-    const health: FeedHealth = { interval_ms: interval, last_ok_at: null, last_failed_at: null, error: null, published: 0 };
+    const health: FeedHealth = { last_ok_at: null, last_failed_at: null, error: null, published: 0, ...stored, interval_ms: interval };
     let timer: ReturnType<typeof setTimeout> | null = null;
     const loop = async (): Promise<void> => {
         let next = interval * pollScale();
@@ -78,19 +87,19 @@ async function trim(): Promise<void> {
 export async function startIngester(): Promise<void> {
     if (!hasAuth) throw new Error("E621_AUTH_USER and E621_AUTH_KEY are required for the ingester");
     await migrate();
-    await redis.del(feedsKey);
     await redis.set(`${redisPrefix}:ingester:started_at`, new Date().toISOString());
     await redis.set(`${redisPrefix}:ingester:commit`, gitCommit);
     await startIdleWatch();
     await markTrackingStart();
     const feeds: Array<Pollable> = [new PostsFeed(), ...FEEDS.map(source => new Feed(source)), ...UPDATES.map(source => new UpdateFeed(source))];
-    for (const feed of feeds) {
-        if (disabledSources.has(feed.source.name)) {
-            Debug("ingester", `${feed.source.name} is disabled`);
-            continue;
-        }
-        run(feed);
-    }
+    for (const feed of feeds) if (disabledSources.has(feed.source.name)) Debug("ingester", `${feed.source.name} is disabled`);
+    const running = feeds.filter(feed => !disabledSources.has(feed.source.name));
+    // health is kept across restarts, only feeds that aren't running anymore are dropped
+    const stored = await redis.send("HGETALL", [feedsKey]) as Record<string, string> | null ?? {};
+    const names = new Set(running.map(feed => feed.source.name));
+    const gone = Object.keys(stored).filter(name => !names.has(name));
+    if (gone.length !== 0) await redis.send("HDEL", [feedsKey, ...gone]);
+    for (const feed of running) run(feed, parseHealth(stored[feed.source.name]));
     setInterval(() => void trim().catch((err: unknown) => { Debug("ingester:trim", `failed: ${String(err)}`); }), 60_000);
     startRecoveryWatch();
     await startLatencyWatch();
