@@ -7,6 +7,7 @@ import { publish } from "../events.ts";
 import { getRecovery, isActive } from "../recovery.ts";
 import redis from "../redis.ts";
 
+import type { PollResult } from "./feedLog.ts";
 import type { Checkpoint } from "./recovery.ts";
 
 export interface Post {
@@ -215,7 +216,7 @@ export class PostsFeed {
         return uploads.length;
     }
 
-    async poll(): Promise<number> {
+    async poll(): Promise<PollResult> {
         let cursor = this.cursor ?? await this.init();
         const recovery = await getRecovery();
         if (isActive(recovery) && recovery.sources.includes("posts") && Date.parse(recovery.from) <= cursor && Date.parse(recovery.to) > cursor) {
@@ -228,13 +229,14 @@ export class PostsFeed {
         const since = cursor - OVERLAP_MS;
         // each page is handled as it comes in, holding every page of a big backlog at once ran the ingester out of memory
         const seen = new Set<number>();
-        let newest = cursor, published = 0, caughtUp = false;
+        let newest = cursor, oldest = Infinity, published = 0, caughtUp = false;
         for (let page = 1; page <= MAX_PAGES_PER_POLL && !caughtUp; page++) {
             const posts = await search("order:updated status:any", LIMIT, page);
             const fresh = posts.filter(post => Date.parse(post.updated_at) > since && !seen.has(post.id));
             for (const post of fresh) {
                 seen.add(post.id);
                 newest = Math.max(newest, Date.parse(post.updated_at));
+                oldest = Math.min(oldest, Date.parse(post.updated_at));
             }
             // uploads can commit out of id order
             published += await this.process(fresh, (post, before) => {
@@ -242,15 +244,16 @@ export class PostsFeed {
                 if (isNew && post.id > this.maxId) this.maxId = post.id;
                 return isNew;
             });
-            const oldest = posts.at(-1);
-            if (posts.length < LIMIT || (oldest && Date.parse(oldest.updated_at) <= since)) caughtUp = true;
+            const last = posts.at(-1);
+            if (posts.length < LIMIT || (last && Date.parse(last.updated_at) <= since)) caughtUp = true;
         }
-        if (!caughtUp) Debug("ingester:posts", `more than ${MAX_PAGES_PER_POLL * LIMIT} updates since ${new Date(since).toISOString()}, some were skipped`);
-        if (seen.size === 0) return 0;
+        const skipped = caughtUp || oldest === Infinity ? undefined : { from: since, to: oldest };
+        if (skipped) Debug("ingester:posts", `more than ${MAX_PAGES_PER_POLL * LIMIT} updates since ${new Date(since).toISOString()}, some were skipped`);
+        if (seen.size === 0) return { published: 0 };
 
         this.cursor = newest;
         await redis.hset(cursorKey, { [UPDATED_FIELD]: String(this.cursor), [MAX_ID_FIELD]: String(this.maxId) });
-        return published;
+        return { published, skipped };
     }
 
     async recover(from: number, to: number, created: Set<number>, stop: () => Promise<void>, checkpoint: Checkpoint<PostsCheckpoint>): Promise<number> {

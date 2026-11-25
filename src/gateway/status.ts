@@ -1,5 +1,6 @@
 import { listStates, type BackfillState } from "../backfill/state.ts";
 import { clientsKey, cursorKey, dataKey, feedsKey, gitCommit, idleKey, idlePollScale, redisPrefix, repositoryURL, streamKey } from "../config.ts";
+import { getLog, type FeedIncident } from "../ingester/feedLog.ts";
 import { recent, totals, trackingSince, type Counts } from "../metrics.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
 import { getRecovery, isActive, type Recovery } from "../recovery.ts";
@@ -83,7 +84,7 @@ function backfillProgress(state: BackfillState): Backfill {
 }
 
 async function build(): Promise<Record<string, unknown>> {
-    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, backfill, clients, idle, counts, cursors, ingesterCommit, since, recovery, slow] = await Promise.all([
+    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, feedLog, backfill, clients, idle, counts, cursors, ingesterCommit, since, recovery, slow] = await Promise.all([
         recent("minute", 60),
         recent("hour", 24),
         totals(),
@@ -91,6 +92,7 @@ async function build(): Promise<Record<string, unknown>> {
         redis.send("XRANGE", [streamKey, "-", "+", "COUNT", "1"]) as Promise<Array<[string, Array<string>]>>,
         redis.get(`${redisPrefix}:ingester:started_at`),
         redis.send("HGETALL", [feedsKey]) as Promise<Record<string, string> | null>,
+        getLog(),
         listStates().then(states => states.map(backfillProgress)).catch((err: unknown) => ({ error: String(err) })),
         redis.send("HVALS", [clientsKey]).then(counts => (counts as Array<string>).reduce((total, n) => total + Number(n), 0)),
         redis.get(idleKey),
@@ -147,6 +149,7 @@ async function build(): Promise<Record<string, unknown>> {
         },
         gateway: { connections: sessions.size, events_received: hubStats.received },
         feeds,
+        feed_log: feedLog,
         backfill,
         recovery: recovery ? { ...recovery, requested_by: undefined, active: isActive(recovery) } : null,
         data: { counted_at: counts?.computed_at ?? null, models: models(counts, cursors ?? {}, feeds) },
@@ -177,6 +180,8 @@ function duration(seconds: number): string {
     if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ${Math.round(seconds % 3600 / 60)}m`;
     return `${Math.floor(seconds / 86_400)}d ${Math.round(seconds % 86_400 / 3600)}h`;
 }
+
+const at = (iso: string): string => `${iso.slice(0, 16).replace("T", " ")} UTC`;
 
 function chart(values: Array<number>, label: string, highlight?: Array<number>): string {
     const max = Math.max(1, ...values), w = 6, gap = 2, h = 48;
@@ -228,6 +233,7 @@ export async function statusPage(): Promise<string> {
         backfill: Array<Backfill> | { error: string };
         data: { counted_at: string | null; models: Array<Model> };
         events: { by_type: Array<{ last_24h: number; last_hour: number; total: number; type: string }>; by_type_last_24h: Array<{ count: number; type: string }>; last_24h: number; last_event_at: string | null; last_hour: number; oldest_retained_at: string | null; per_minute: Array<{ events: number }>; per_minute_last_hour: number; retained: number; total: number };
+        feed_log: Array<FeedIncident>;
         feeds: Array<FeedHealth & { name: string }>;
         gateway: { connections: number };
         gateway_commit: string;
@@ -255,6 +261,15 @@ export async function statusPage(): Promise<string> {
         return `<tr><td>${esc(f.name)}</td><td>${duration(Math.round(f.interval_ms / 1000))}</td><td class="${stale || !f.last_ok_at ? "bad" : ""}">${ago(f.last_ok_at)}</td>
             <td class="n">${num(f.published)}</td><td class="${f.error ? "bad" : "dim"}">${f.error ? `${ago(f.last_failed_at)}: ${esc(f.error)}` : f.last_failed_at ? ago(f.last_failed_at) : ""}</td></tr>`;
     }).join("");
+    const incidents = [...feeds.flatMap(f => f.outage ? [f.outage] : []).toSorted((a, b) => b.started_at.localeCompare(a.started_at)), ...data.feed_log];
+    const incidentRows = incidents.length === 0
+        ? "<tr><td colspan=\"6\" class=\"dim\">nothing yet</td></tr>"
+        : incidents.map((i) => {
+                const length = i.ended_at === null ? `<span class="bad">ongoing, ${duration(Math.round((Date.now() - Date.parse(i.started_at)) / 1000))}</span>` : i.failures === 0 ? "" : duration(Math.round((i.duration_ms ?? 0) / 1000));
+                const skipped = i.skipped ? `<span class="bad">${esc(at(i.skipped.from))} to ${esc(at(i.skipped.to))}</span>` : i.ended_at === null ? "" : "none";
+                const errors = i.failures === 0 ? "too many changes to catch up on in one poll" : i.errors.map(esc).join("<br>");
+                return `<tr><td>${esc(i.feed)}</td><td>${esc(at(i.started_at))}</td><td>${length}</td><td class="n">${num(i.failures)}</td><td>${skipped}</td><td class="detail">${errors}</td></tr>`;
+            }).join("");
     const ms = (value: number | null | undefined): string => value === null || value === undefined ? "" : `${num(value)}ms`;
     const roleRows = Object.entries(requests.by_role).map(([role, r]) => `<tr><td>${esc(role)}</td>
         <td class="n">${num(r.last_hour.requests ?? 0)}</td><td class="n">${num(r.last_hour.failed ?? 0)}</td><td class="n">${ms(r.last_hour.avg_ms)}</td>
@@ -354,6 +369,13 @@ ${modelRows}
 <div class="table-wrap"><table>
 <tr><th>feed</th><th>every</th><th>last poll</th><th>events published</th><th>last failure</th></tr>
 ${feedRows}
+</table></div>
+
+<h2>Feed log</h2>
+<p class="dim">Times a feed failed, how long for, and what could have been missed because of it. Skipped ranges are by updated_at, a recovery over them fills them in.</p>
+<div class="table-wrap"><table>
+<tr><th>feed</th><th>started</th><th>length</th><th>failures</th><th>skipped</th><th>errors</th></tr>
+${incidentRows}
 </table></div>
 
 <h2>Event types</h2>

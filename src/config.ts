@@ -24,6 +24,7 @@ export const redisPrefix = Bun.env.REDIS_PREFIX ?? "e621stream";
 export const streamKey = `${redisPrefix}:events`;
 export const cursorKey = `${redisPrefix}:cursors`;
 export const feedsKey = `${redisPrefix}:feeds`;
+export const feedLogKey = `${redisPrefix}:feed_log`;
 export const clientsKey = `${redisPrefix}:clients`;
 export const clientListKey = `${redisPrefix}:client_list`;
 export const bansKey = `${redisPrefix}:bans`;

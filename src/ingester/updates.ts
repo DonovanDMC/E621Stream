@@ -6,6 +6,8 @@ import { e621, request } from "../e621.ts";
 import { publish, type EventType } from "../events.ts";
 import redis from "../redis.ts";
 
+import type { PollResult } from "./feedLog.ts";
+
 export interface Item { created_at?: string | null; id: number; updated_at?: string | null }
 interface SearchOptions { limit: number; page: number }
 type Changes = Record<string, { new: unknown; old: unknown }>;
@@ -101,7 +103,7 @@ export class UpdateFeed {
         return { items, full: items.length === LIMIT };
     }
 
-    private async pollOrdered(): Promise<number> {
+    private async pollOrdered(): Promise<PollResult> {
         const field = `${this.source.name}:updated_at`;
         if (this.cursor === null) {
             const stored = await redis.hget(cursorKey, field);
@@ -114,7 +116,7 @@ export class UpdateFeed {
                 this.cursor = times.length === 0 ? Date.now() : Math.max(...times);
                 await redis.hset(cursorKey, field, String(this.cursor));
                 Debug(`ingester:${this.source.name}`, `starting at ${new Date(this.cursor).toISOString()}`);
-                return 0;
+                return { published: 0 };
             }
         }
 
@@ -132,7 +134,9 @@ export class UpdateFeed {
             }
             if (!full) caughtUp = true;
         }
-        if (!caughtUp) Debug(`ingester:${this.source.name}`, `more than ${this.source.pages * LIMIT} updates since the last poll, some were skipped`);
+        const oldest = Date.parse(found.at(-1)?.updated_at ?? "");
+        const skipped = caughtUp || Number.isNaN(oldest) ? undefined : { from: since, to: oldest };
+        if (skipped) Debug(`ingester:${this.source.name}`, `more than ${this.source.pages * LIMIT} updates since the last poll, some were skipped`);
 
         found.reverse();
         const published = await this.handle(found, this.source.unknownChanges);
@@ -141,10 +145,10 @@ export class UpdateFeed {
             this.cursor = newest;
             await redis.hset(cursorKey, field, String(newest));
         }
-        return published;
+        return { published, skipped };
     }
 
-    private async pollWindow(): Promise<number> {
+    private async pollWindow(): Promise<PollResult> {
         const items: Array<Item> = [];
         for (let page = 1; page <= this.source.pages; page++) {
             const { full, items: batch } = await this.fetch(page);
@@ -153,7 +157,7 @@ export class UpdateFeed {
         }
         items.sort((a, b) => a.id - b.id);
         const created = await this.publishCreates(items);
-        return created.count + await this.handle(items.filter(item => !created.ids.has(item.id)), false);
+        return { published: created.count + await this.handle(items.filter(item => !created.ids.has(item.id)), false) };
     }
 
     private async publishCreates(items: Array<Item>): Promise<{ count: number; ids: Set<number> }> {
@@ -221,7 +225,7 @@ export class UpdateFeed {
         return published;
     }
 
-    poll(): Promise<number> {
+    poll(): Promise<PollResult> {
         return this.source.mode === "ordered" ? this.pollOrdered() : this.pollWindow();
     }
 

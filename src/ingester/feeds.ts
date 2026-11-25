@@ -8,6 +8,8 @@ import redis from "../redis.ts";
 import { afterPostEvent } from "./postEvents.ts";
 import { isPrivateSet, remember, TRACKED, type Tracked } from "./updates.ts";
 
+import type { PollResult } from "./feedLog.ts";
+
 interface Page { limit: number; page: `${"a" | "b"}${number}` }
 
 export interface FeedSource {
@@ -169,7 +171,7 @@ export class Feed {
         for (const id of this.seen) if (id <= floor) this.seen.delete(id);
     }
 
-    async poll(): Promise<number> {
+    async poll(): Promise<PollResult> {
         let cursor = this.cursor ?? await this.init();
         let published = 0;
         for (let page = 0; page < MAX_PAGES_PER_POLL; page++) {
@@ -190,7 +192,7 @@ export class Feed {
         }
         this.cursor = cursor;
         this.trimSeen();
-        return published;
+        return { published };
     }
 
     async recover(from: number, to: number, sent: Set<number>, stop: () => Promise<void>): Promise<number> {

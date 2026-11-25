@@ -9,6 +9,7 @@ import { markTrackingStart } from "../metrics.ts";
 import redis from "../redis.ts";
 
 import { startDataCounts } from "./data.ts";
+import { failed, succeeded, type FeedIncident, type PollResult } from "./feedLog.ts";
 import { Feed, FEEDS } from "./feeds.ts";
 import { onWake, pollScale, startIdleWatch } from "./idle.ts";
 import { PostsFeed } from "./posts.ts";
@@ -17,7 +18,7 @@ import { UpdateFeed, UPDATES } from "./updates.ts";
 
 interface Pollable {
     source: { intervalMS: number; name: string };
-    poll(): Promise<number>;
+    poll(): Promise<PollResult>;
 }
 
 const AUTH_RETRY_MS = 60 * 60 * 1000;
@@ -27,6 +28,7 @@ export interface FeedHealth {
     interval_ms: number;
     last_failed_at: string | null;
     last_ok_at: string | null;
+    outage: FeedIncident | null;
     published: number;
 }
 
@@ -42,16 +44,18 @@ function parseHealth(stored: string | undefined): Partial<FeedHealth> {
 function run(feed: Pollable, stored: Partial<FeedHealth>): void {
     const { name, intervalMS } = feed.source;
     const interval = intervalMS * pollIntervalScale;
-    const health: FeedHealth = { last_ok_at: null, last_failed_at: null, error: null, published: 0, ...stored, interval_ms: interval };
+    const health: FeedHealth = { last_ok_at: null, last_failed_at: null, error: null, outage: null, published: 0, ...stored, interval_ms: interval };
     let timer: ReturnType<typeof setTimeout> | null = null;
     const loop = async (): Promise<void> => {
         let next = interval * pollScale();
         try {
-            const count = await feed.poll();
-            if (count !== 0) Debug(`ingester:${name}`, `published ${count} event(s)`);
+            const result = await feed.poll();
+            if (result.published !== 0) Debug(`ingester:${name}`, `published ${result.published} event(s)`);
             health.last_ok_at = new Date().toISOString();
-            health.published += count;
+            health.published += result.published;
             health.error = null;
+            await succeeded(name, health.outage, result).catch((err: unknown) => { Debug(`ingester:${name}`, `couldn't log: ${String(err)}`); });
+            health.outage = null;
         } catch (err) {
             if (err instanceof AuthError) {
                 Debug(`ingester:${name}`, `access denied (${err.message}), trying again in an hour`);
@@ -61,6 +65,7 @@ function run(feed: Pollable, stored: Partial<FeedHealth>): void {
             }
             health.last_failed_at = new Date().toISOString();
             health.error = String(err);
+            health.outage = failed(name, health.outage, err);
         }
         health.interval_ms = next;
         await redis.hset(feedsKey, name, JSON.stringify(health)).catch(() => null);
