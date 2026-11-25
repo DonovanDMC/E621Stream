@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { recoveryKey } from "./config.ts";
+import { recoveryHistoryKey, recoveryKey } from "./config.ts";
 import redis from "./redis.ts";
+
+const MAX_HISTORY = 50;
 
 export type RecoveryStatus = "pending" | "running" | "done" | "failed" | "cancelled";
 
@@ -61,12 +63,18 @@ export async function saveRecovery(recovery: Recovery): Promise<void> {
 
 export const isActive = (recovery: Recovery | null): recovery is Recovery => recovery?.status === "pending" || recovery?.status === "running";
 
+export async function getRecoveryHistory(limit = 20): Promise<Array<Recovery>> {
+    const entries = await redis.send("LRANGE", [recoveryHistoryKey, "0", String(limit - 1)]) as Array<string>;
+    return entries.map(entry => JSON.parse(entry) as Recovery);
+}
+
 export async function requestRecovery(from: Date, to: Date, sources: Array<string>, by: string): Promise<Recovery | string> {
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return "invalid time";
     if (from >= to) return "from has to be before to";
     if (to.getTime() > Date.now()) return "to can't be in the future";
     if (sources.length === 0) return "no sources";
-    if (isActive(await getRecovery())) return "a recovery is already running";
+    const previous = await getRecovery();
+    if (previous?.status === "pending" || previous?.status === "running") return "a recovery is already running";
     const recovery: Recovery = {
         id: `r${Date.now().toString(36)}`,
         from: from.toISOString(),
@@ -81,6 +89,11 @@ export async function requestRecovery(from: Date, to: Date, sources: Array<strin
         error: null,
         progress: Object.fromEntries(sources.map(source => [source, { status: "pending", events: 0, error: null }])),
     };
+    if (previous) {
+        for (const progress of Object.values(previous.progress)) delete progress.checkpoint;
+        await redis.send("LPUSH", [recoveryHistoryKey, JSON.stringify(previous)]);
+        await redis.send("LTRIM", [recoveryHistoryKey, "0", String(MAX_HISTORY - 1)]);
+    }
     await saveRecovery(recovery);
     return recovery;
 }

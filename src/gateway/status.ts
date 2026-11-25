@@ -3,7 +3,7 @@ import { clientsKey, cursorKey, dataKey, feedsKey, gitCommit, idleKey, idlePollS
 import { getLog, type FeedIncident } from "../ingester/feedLog.ts";
 import { recent, totals, trackingSince, type Counts } from "../metrics.ts";
 import { NAV, NAV_CSS, navHTML } from "../nav.ts";
-import { getRecovery, isActive, type Recovery } from "../recovery.ts";
+import { getRecovery, getRecoveryHistory, isActive, type Recovery } from "../recovery.ts";
 import redis from "../redis.ts";
 import { getSlowMode } from "../slowMode.ts";
 
@@ -84,7 +84,7 @@ function backfillProgress(state: BackfillState): Backfill {
 }
 
 async function build(): Promise<Record<string, unknown>> {
-    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, feedLog, backfill, clients, idle, counts, cursors, ingesterCommit, since, recovery, slow] = await Promise.all([
+    const [minutes, hours, allTime, length, oldest, startedAt, feedHealth, feedLog, backfill, clients, idle, counts, cursors, ingesterCommit, since, recovery, recoveryHistory, slow] = await Promise.all([
         recent("minute", 60),
         recent("hour", 24),
         totals(),
@@ -101,6 +101,7 @@ async function build(): Promise<Record<string, unknown>> {
         redis.get(`${redisPrefix}:ingester:commit`),
         trackingSince(),
         getRecovery(),
+        getRecoveryHistory(),
         getSlowMode(),
     ]);
     const feeds = Object.entries(feedHealth ?? {}).map(([name, health]) => ({ name, ...JSON.parse(health) as FeedHealth })).sort((a, b) => a.name.localeCompare(b.name));
@@ -152,6 +153,7 @@ async function build(): Promise<Record<string, unknown>> {
         feed_log: feedLog,
         backfill,
         recovery: recovery ? { ...recovery, requested_by: undefined, active: isActive(recovery) } : null,
+        previous_recoveries: recoveryHistory.map(r => ({ ...r, requested_by: undefined, progress: Object.fromEntries(Object.entries(r.progress).map(([name, p]) => [name, { status: p.status, events: p.events, error: p.error }])) })),
         data: { counted_at: counts?.computed_at ?? null, models: models(counts, cursors ?? {}, feeds) },
     };
 }
@@ -239,6 +241,7 @@ export async function statusPage(): Promise<string> {
         gateway_commit: string;
         generated_at: string;
         ingester: { clients: number; commit: string | null; idle: boolean; idle_poll_scale: number; slow_poll_scale: number | null; started_at: string | null };
+        previous_recoveries: Array<Recovery>;
         recovery: (Recovery & { active: boolean }) | null;
         requests: { avg_ms: Record<string, number | null>; by_role: Record<string, { last_24h: Record<string, number | null>; last_hour: Record<string, number | null> }>; by_route: Record<string, { last_24h: { avg_ms: number | null; requests: number }; last_hour: { avg_ms: number | null; requests: number } }>; failed: Counts; last_24h: number; last_hour: number; per_minute: Array<{ avg_ms: number | null; failed: number; requests: number }>; per_second_last_hour: number; ratelimited: Counts; total: number };
         tracking_since: string | null;
@@ -284,10 +287,14 @@ export async function statusPage(): Promise<string> {
         ? `<p class="notice">We're going back over ${window} for events we missed, they're sent with <code>"recovered": true</code>. ${num(sourcesDone)} of ${num(recovery.sources.length)} source(s) done so far. See <a href="/replaying/#recoveries">Recoveries</a>.</p>`
         : "";
     const RECOVERY_CLASS: Record<string, string> = { ...STATUS_CLASS, cancelled: "dim" };
+    const hasDetail = recovery ? recovery.sources.some(name => (recovery.progress[name]?.error ?? recovery.progress[name]?.detail)) : false;
     const recoveryRows = recovery ? recovery.sources.map((name) => {
         const p = recovery.progress[name];
-        return `<tr><td>${esc(name)}</td><td class="${RECOVERY_CLASS[p?.status ?? "pending"] ?? ""}">${esc(p?.status ?? "pending")}</td><td>${p?.fraction === undefined ? "" : `<div class="bar"><div style="width:${Math.round(p.fraction * 100)}%"></div></div>${(p.fraction * 100).toFixed(1)}%`}</td><td class="n">${num(p?.events ?? 0)}</td><td class="detail">${esc(p?.error ?? p?.detail ?? "")}</td></tr>`;
+        return `<tr><td>${esc(name)}</td><td class="${RECOVERY_CLASS[p?.status ?? "pending"] ?? ""}">${esc(p?.status ?? "pending")}</td><td>${p?.fraction === undefined ? "" : `<div class="bar"><div style="width:${Math.round(p.fraction * 100)}%"></div></div>${(p.fraction * 100).toFixed(1)}%`}</td><td class="n">${num(p?.events ?? 0)}</td>${hasDetail ? `<td class="detail">${esc(p?.error ?? p?.detail ?? "")}</td>` : ""}</tr>`;
     }).join("") : "";
+    const previousErrors = data.previous_recoveries.map(r => [r.error, ...Object.entries(r.progress).filter(([, p]) => p.error).map(([name, p]) => `${name}: ${p.error}`)].filter(e => e !== null).map(e => esc(e)).join("<br>"));
+    const previousHasErrors = previousErrors.some(e => e !== "");
+    const previousRows = data.previous_recoveries.map((r, i) => `<tr><td>${esc(at(r.from))} to ${esc(at(r.to))}</td><td>${esc(r.sources.join(", "))}</td><td class="${RECOVERY_CLASS[r.status] ?? ""}">${esc(r.status)}</td><td class="n">${num(r.events)}</td><td>${r.finished_at ? ago(r.finished_at) : ""}</td>${previousHasErrors ? `<td class="detail">${previousErrors[i]}</td>` : ""}</tr>`).join("");
     const typeRows = events.by_type.map(t => `<tr><td>${esc(t.type)}</td><td class="n">${num(t.last_hour)}</td><td class="n">${num(t.last_24h)}</td><td class="n">${num(t.total)}</td></tr>`).join("");
 
     return `<!DOCTYPE html>
@@ -354,8 +361,13 @@ ${recovery ? `<h2>Recovery</h2>
 <p>${recovery.active ? "Running" : "The last one"}: ${window}, <span class="${RECOVERY_CLASS[recovery.status] ?? ""}">${esc(recovery.status)}</span>, ${num(recovery.events)} event(s) sent${recovery.started_at ? `, started ${ago(recovery.started_at)}` : ""}${recovery.finished_at ? `, finished ${ago(recovery.finished_at)}` : ""}.${recovery.error ? ` <span class="bad">${esc(recovery.error)}</span>` : ""}</p>
 <p class="dim">Going back over a window of time we missed events in, and sending what wasn't sent the first time. See <a href="/replaying/#recoveries">Recoveries</a>.</p>
 <div class="table-wrap"><table>
-<tr><th>source</th><th>status</th><th>progress</th><th>events</th><th></th></tr>
+<tr><th>source</th><th>status</th><th>progress</th><th>events</th>${hasDetail ? "<th>detail</th>" : ""}</tr>
 ${recoveryRows}
+</table></div>` : ""}
+${previousRows ? `<h3>Previous recoveries</h3>
+<div class="table-wrap"><table>
+<tr><th>window</th><th>sources</th><th>status</th><th>events</th><th>finished</th>${previousHasErrors ? "<th>errors</th>" : ""}</tr>
+${previousRows}
 </table></div>` : ""}
 
 <h2>Data</h2>
