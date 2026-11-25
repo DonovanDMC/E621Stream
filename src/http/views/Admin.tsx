@@ -2,22 +2,18 @@ import Config from "../../Config.ts";
 import { isActive, type Recovery, type RecoveryStatus } from "../../gateway/recovery.ts";
 import { RECOVERABLE } from "../../ingester/recovery.ts";
 import { FEED_SOURCES } from "../../ingester/sources.ts";
-import { MAX_BAN_REASON_LENGTH, MESSAGE_LIMIT_MAX, MESSAGE_LIMIT_MIN, SLOW_MODE_DEFAULT_SCALE, SLOW_MODE_MAX_SCALE, SLOW_MODE_MIN_SCALE } from "../../util/Constants.ts";
+import { MESSAGE_LIMIT_MAX, MESSAGE_LIMIT_MIN, SLOW_MODE_DEFAULT_SCALE, SLOW_MODE_MAX_SCALE, SLOW_MODE_MIN_SCALE } from "../../util/Constants.ts";
 
 import Main from "./layouts/Main.tsx";
 import FormButton from "./partials/FormButton.tsx";
 import Time from "./partials/Time.tsx";
 
 import type User from "../../db/models/User.ts";
-import type { Ban } from "../../gateway/management.ts";
-import type { ListedClient } from "../../gateway/presence.ts";
 import type { SlowMode } from "../../gateway/slowMode.ts";
 import type { FeedControl } from "../../ingester/control.ts";
 import type { FeedHealth } from "../../ingester/health.ts";
 
 export interface AdminProps {
-    bans: Array<Ban>;
-    clients: Array<ListedClient>;
     feedControls: Record<string, FeedControl>;
     feedHealth: Record<string, Partial<FeedHealth>>;
     /** Users whose message limit isn't the default */
@@ -31,12 +27,6 @@ export interface AdminProps {
     viewer: User;
 }
 
-const STATES = {
-    pending: ["identifying", "text-body-secondary"],
-    replaying: ["replaying", "text-info"],
-    live: ["live", "text-success"],
-} satisfies Record<ListedClient["state"], [label: string, className: string]>;
-
 const RECOVERY_CLASSES = {
     pending: "text-info",
     running: "text-info",
@@ -45,21 +35,10 @@ const RECOVERY_CLASSES = {
     cancelled: "text-body-secondary",
 } satisfies Record<RecoveryStatus, string>;
 
-// only the first few are shown, the rest are behind a toggle
-const SHOWN_SUBSCRIPTIONS = 3;
-
-export default function Admin({ bans, clients, feedControls, feedHealth, limited, names, recovery, slowMode, staff, viewer }: AdminProps): JSX.Element {
-    // staff can't be banned
-    const admins = staff.map(user => user.id);
+export default function Admin({ feedControls, feedHealth, limited, names, recovery, slowMode, staff, viewer }: AdminProps): JSX.Element {
     return (
         <Main title="Admin" styles={["pages/admin"]}>
-            <h2 class="h4 mt-4">Clients ({clients.length})</h2>
-            <p class="text-body-secondary">Dropped clients can still reconnect, ban them to stop that.</p>
-            {clients.length === 0 ? <p>Nobody's connected.</p> : <ClientList admins={admins} clients={clients} />}
-
-            <h2 class="h4 mt-4">Bans ({bans.length})</h2>
-            <BanForm />
-            {bans.length === 0 ? <p>Nobody's banned.</p> : <BanList bans={bans} />}
+            <h1 class="h3">Admin</h1>
 
             <h2 class="h4 mt-4">Admins ({staff.length})</h2>
             <p class="text-body-secondary">{viewer.is("owner") ? <>Owners can only be changed with <code>e621stream promote</code>.</> : "Only owners can add or remove admins."}</p>
@@ -89,109 +68,6 @@ export default function Admin({ bans, clients, feedControls, feedHealth, limited
             </p>
             <RecoverySection recovery={recovery} />
         </Main>
-    );
-}
-
-function ClientList({ admins, clients }: { admins: Array<number>; clients: Array<ListedClient> }): JSX.Element {
-    return (
-        <div class="table-responsive">
-            <table class="table align-middle">
-                <thead>
-                    <tr>
-                        <th scope="col">Client</th>
-                        <th scope="col">User</th>
-                        <th scope="col">State</th>
-                        <th scope="col">Subscriptions</th>
-                        <th scope="col">IP</th>
-                        <th scope="col">Connected</th>
-                        <th scope="col"></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {clients.map(client => (
-                        <tr>
-                            <td>{client.client === null ? <span class="text-body-secondary">unnamed</span> : <span safe>{client.client}</span>}</td>
-                            <td>{client.user_id === null ? <span class="text-body-secondary">anonymous</span> : <a href={`https://e621.net/users/${client.user_id}`} safe>{client.user ?? client.user_id}</a>}</td>
-                            <td class={STATES[client.state][1]}>{STATES[client.state][0]}</td>
-                            <td><Subscriptions id={client.session_id} subscriptions={client.subscriptions} /></td>
-                            <td safe>{client.ip}</td>
-                            <td><Time date={new Date(client.connected_at)} /></td>
-                            <td class="text-end">
-                                <div class="d-inline-flex gap-2">
-                                    <FormButton action="/admin/drop" buttonClass="btn-outline-warning" fields={{ session_id: client.session_id }} text="Drop" />
-                                    {client.user_id !== null && !admins.includes(client.user_id) && (
-                                        <FormButton action="/admin/ban" buttonClass="btn-outline-danger" confirmText={`Ban ${client.user ?? client.user_id}? This drops all of their connections.`} fields={{ user_id: client.user_id, name: client.user ?? "" }} text="Ban" />
-                                    )}
-                                </div>
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    );
-}
-
-function Subscriptions({ id, subscriptions }: { id: string; subscriptions: ListedClient["subscriptions"] }): JSX.Element {
-    if (subscriptions.length === 0) return <span class="text-body-secondary">none</span>;
-    const items = subscriptions.map((sub) => {
-        const types = [...sub.types, ...sub.privateTypes].join(", ");
-        if (!sub.filter) return <div><code safe>{types}</code></div>;
-        return (
-            <details>
-                <summary><code safe>{types}</code></summary>
-                <code class="d-block ps-3 text-break" safe>{JSON.stringify(sub.filter)}</code>
-            </details>
-        );
-    });
-    if (items.length <= SHOWN_SUBSCRIPTIONS) return <>{items}</>;
-    return (
-        <>
-            {items.slice(0, SHOWN_SUBSCRIPTIONS)}
-            <div class="collapse" id={`subs-${id}`}>{items.slice(SHOWN_SUBSCRIPTIONS)}</div>
-            <a href={`#subs-${id}`} data-bs-toggle="collapse" role="button" aria-expanded="false">{items.length - SHOWN_SUBSCRIPTIONS} more</a>
-        </>
-    );
-}
-
-function BanForm(): JSX.Element {
-    return (
-        <form method="post" action="/admin/ban" class="d-flex flex-wrap gap-2 mb-3">
-            <input type="text" class="form-control w-auto" name="user_id" placeholder="e621 user id" inputmode="numeric" pattern="[0-9]+" required />
-            <input type="text" class="form-control w-auto" name="reason" placeholder="reason (optional)" maxlength={MAX_BAN_REASON_LENGTH} />
-            <button type="submit" class="btn btn-danger">Ban</button>
-        </form>
-    );
-}
-
-function BanList({ bans }: { bans: Array<Ban> }): JSX.Element {
-    return (
-        <div class="table-responsive">
-            <table class="table align-middle">
-                <thead>
-                    <tr>
-                        <th scope="col">User</th>
-                        <th scope="col">Reason</th>
-                        <th scope="col">By</th>
-                        <th scope="col">Banned</th>
-                        <th scope="col"></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {bans.map(ban => (
-                        <tr>
-                            <td><a href={`https://e621.net/users/${ban.user_id}`} safe>{ban.name ?? ban.user_id}</a></td>
-                            <td safe>{ban.reason ?? ""}</td>
-                            <td safe>{ban.banned_by}</td>
-                            <td><Time date={new Date(ban.banned_at)} /></td>
-                            <td class="text-end">
-                                <FormButton action="/admin/unban" buttonClass="btn-outline-success" fields={{ user_id: ban.user_id }} text="Unban" />
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
     );
 }
 

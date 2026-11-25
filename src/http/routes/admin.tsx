@@ -15,10 +15,13 @@ import { RECOVERABLE } from "../../ingester/recovery.ts";
 import { FEED_NAMES } from "../../ingester/sources.ts";
 import { MAX_BAN_REASON_LENGTH, MESSAGE_LIMIT_MAX, MESSAGE_LIMIT_MIN, SLOW_MODE_MAX_SCALE, SLOW_MODE_MIN_SCALE } from "../../util/Constants.ts";
 import I18n from "../../util/I18n.ts";
+import { returnPath } from "../../util/util.ts";
 import { getDatabaseStats } from "../DatabaseStats.ts";
 import { flashWithRedirect } from "../Flash.ts";
 import { loginRequired } from "../Session.tsx";
 import Admin from "../views/Admin.tsx";
+import Bans from "../views/Bans.tsx";
+import Clients from "../views/Clients.tsx";
 import DatabaseStats from "../views/DatabaseStats.tsx";
 import { render } from "../Views.ts";
 
@@ -44,11 +47,22 @@ const optional = z.string().trim().transform(value => value === "" ? null : valu
 Router.new("/admin", "GET")
     .use(loginRequired("admin"))
     .handle(async (req) => {
-        const [clients, bans, recovery, slowMode, staff, feedHealth, feedControls, limited] = await Promise.all([listClients(), listBans(), getRecovery(), getSlowMode(), User.whereIn("role", ["admin", "owner"], {}, { order: { id: "ASC" } }), getFeedHealth(), getFeedControls(), User.withMessageLimits()]);
+        const [recovery, slowMode, staff, feedHealth, feedControls, limited] = await Promise.all([getRecovery(), getSlowMode(), User.whereIn("role", ["admin", "owner"], {}, { order: { id: "ASC" } }), getFeedHealth(), getFeedControls(), User.withMessageLimits()]);
         const links = await OAuthLink.whereIn("user_id", [...staff, ...limited].map(user => user.id));
         const names = new Map(links.map(link => [link.user_id, link.cached_data.user.name]));
-        return render(<Admin bans={bans} clients={clients} feedControls={feedControls} feedHealth={feedHealth} limited={limited} names={names} recovery={recovery} slowMode={slowMode} staff={staff} viewer={req.user} />);
+        return render(<Admin feedControls={feedControls} feedHealth={feedHealth} limited={limited} names={names} recovery={recovery} slowMode={slowMode} staff={staff} viewer={req.user} />);
     });
+
+Router.new("/admin/clients", "GET")
+    .use(loginRequired("admin"))
+    .handle(async () => {
+        const [clients, staff] = await Promise.all([listClients(), User.whereIn("role", ["admin", "owner"])]);
+        return render(<Clients admins={staff.map(user => user.id)} clients={clients} />);
+    });
+
+Router.new("/admin/bans", "GET")
+    .use(loginRequired("admin"))
+    .handle(async () => render(<Bans bans={await listBans()} />));
 
 Router.new("/admin/database", "GET")
     .use(loginRequired("admin"))
@@ -92,10 +106,10 @@ Router.new("/admin/drop", "POST")
     }))
     .handle(async (req) => {
         const sessionID = req.parsedBody.session_id;
-        if (!z.uuid().safeParse(sessionID).success) return flashWithRedirect("/admin", "error", I18n.t("web.admin.invalidSession"));
+        if (!z.uuid().safeParse(sessionID).success) return flashWithRedirect("/admin/clients", "error", I18n.t("web.admin.invalidSession"));
         await drop(sessionID);
         Debug("http:admin", `#${req.user.id} dropped ${sessionID}`);
-        return flashWithRedirect("/admin", "success", I18n.t("web.admin.success.dropped"));
+        return flashWithRedirect("/admin/clients", "success", I18n.t("web.admin.success.dropped"));
     });
 
 Router.new("/admin/ban", "POST")
@@ -107,14 +121,17 @@ Router.new("/admin/ban", "POST")
                 user_id: z.coerce.number(),
                 name: optional,
                 reason: optional,
+                // banning from the clients page goes back there
+                return_to: optional,
             });
             return schema.parse(raw);
         },
     }))
     .handle(async (req) => {
-        const { name = null, reason = null, user_id: userID } = req.parsedBody;
-        if (!Number.isSafeInteger(userID) || userID <= 0) return flashWithRedirect("/admin", "error", I18n.t("web.admin.invalidUser"));
-        if ((await User.find(userID))?.is("admin")) return flashWithRedirect("/admin", "error", I18n.t("web.admin.adminBan"));
+        const { name = null, reason = null, return_to: returnTo, user_id: userID } = req.parsedBody;
+        const back = returnPath(returnTo, "/admin/bans");
+        if (!Number.isSafeInteger(userID) || userID <= 0) return flashWithRedirect(back, "error", I18n.t("web.admin.invalidUser"));
+        if ((await User.find(userID))?.is("admin")) return flashWithRedirect(back, "error", I18n.t("web.admin.adminBan"));
         await ban({
             user_id: userID,
             name,
@@ -123,7 +140,7 @@ Router.new("/admin/ban", "POST")
             banned_at: new Date().toISOString(),
         });
         Debug("http:admin", `#${req.user.id} banned #${userID}`);
-        return flashWithRedirect("/admin", "success", I18n.t("web.admin.success.banned", { user: name ?? `#${userID}` }));
+        return flashWithRedirect(back, "success", I18n.t("web.admin.success.banned", { user: name ?? `#${userID}` }));
     });
 
 Router.new("/admin/unban", "POST")
@@ -139,10 +156,10 @@ Router.new("/admin/unban", "POST")
     }))
     .handle(async (req) => {
         const userID = req.parsedBody.user_id;
-        if (!Number.isSafeInteger(userID)) return flashWithRedirect("/admin", "error", I18n.t("web.admin.invalidUser"));
+        if (!Number.isSafeInteger(userID)) return flashWithRedirect("/admin/bans", "error", I18n.t("web.admin.invalidUser"));
         await unban(userID);
         Debug("http:admin", `#${req.user.id} unbanned #${userID}`);
-        return flashWithRedirect("/admin", "success", I18n.t("web.admin.success.unbanned", { user: `#${userID}` }));
+        return flashWithRedirect("/admin/bans", "success", I18n.t("web.admin.success.unbanned", { user: `#${userID}` }));
     });
 
 Router.new("/admin/slow", "POST")

@@ -10,7 +10,7 @@ interface NavLink { exact?: boolean; href: string; paths?: Array<string>; text: 
 function links(user: User | null): Array<NavLink> {
     const list: Array<NavLink> = [{ href: "/", paths: DOCS.map(doc => doc.href), text: "Docs" }, { href: "/status", text: "Status" }];
     if (user) list.push({ href: "/user", text: "Tokens" });
-    if (user?.is("admin")) list.push({ href: "/admin", exact: true, text: "Admin" }, { href: "/admin/database", text: "Database" });
+    if (user?.is("admin")) list.push({ href: "/admin", exact: true, text: "Admin" }, { href: "/admin/clients", text: "Clients" }, { href: "/admin/bans", text: "Bans" }, { href: "/admin/database", text: "Database" });
     return list;
 }
 

@@ -53,7 +53,7 @@ describe("pages", () => {
 });
 
 describe("logged in pages", () => {
-    for (const path of ["/user", "/admin", "/admin/database"]) {
+    for (const path of ["/user", "/admin", "/admin/clients", "/admin/bans", "/admin/database"]) {
         test(`${path} sends you to log in, and isn't cached`, async () => {
             const res = await get(path);
             expect(res.status).toBeGreaterThanOrEqual(300);
