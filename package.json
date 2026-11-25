@@ -35,7 +35,7 @@
     "@yiffy/bun-router": "^1.0.8",
     "@yiffy/debug": "^0.0.1",
     "bootstrap": "^5.3.9",
-    "dbmate": "^2.38.1",
+    "dbmate": "^2.38.2",
     "discord-api-types": "^0.38.59",
     "e621": "^3.7.0",
     "e621-openapi": "^1.0.364",
