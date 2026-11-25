@@ -1,0 +1,176 @@
+x-app: &app
+  build:
+    context: .
+    args:
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}
+  image: e621stream
+  restart: always
+  init: true
+  env_file: .env
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+  # docker compose watch
+  develop:
+    watch:
+      # bun runs the source as-is, so a restart is enough
+      - action: sync+restart
+        path: ./src
+        target: /app/src
+      - action: rebuild
+        path: package.json
+      - action: rebuild
+        path: bun.lock
+      - action: rebuild
+        path: Dockerfile
+
+services:
+  http:
+    <<: *app
+    command: bun /app/src/http/index.tsx
+    ports:
+      - "127.0.0.1:${HTTP_PORT}:${HTTP_PORT}"
+    healthcheck:
+      test: wget -q --spider http://127.0.0.1:$${HTTP_PORT}/health
+      interval: 10s
+      timeout: 2s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    volumes:
+      - ./logs:/app/logs
+    hostname: http.e621stream.containers.local
+    labels: { internal.dockerhosts.hostname: http.e621stream.containers.local }
+  gateway:
+    <<: *app
+    command: bun /app/src/gateway/index.ts
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT}:${GATEWAY_PORT}"
+    healthcheck:
+      test: wget -q --spider http://127.0.0.1:$${GATEWAY_PORT}/health
+      interval: 10s
+      timeout: 2s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    volumes:
+      - ./logs:/app/logs
+    hostname: gateway.e621stream.containers.local
+    labels:
+      { internal.dockerhosts.hostname: gateway.e621stream.containers.local }
+  # polls e621, there must only ever be one of these
+  ingester:
+    <<: *app
+    command: bun /app/src/ingester/index.ts
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    volumes:
+      - ./logs:/app/logs
+    hostname: ingester.e621stream.containers.local
+    labels: { internal.dockerhosts.hostname: ingester.e621stream.containers.local }
+  egress-1:
+    <<: *app
+    command: bun /app/src/egress/index.ts
+    ports:
+      - "127.0.0.1:${EGRESS_PORT}:${EGRESS_PORT}"
+    depends_on: []
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: wget -q --spider http://127.0.0.1:$${EGRESS_PORT}/health
+      interval: 10s
+      timeout: 2s
+    hostname: egress-1.e621stream.containers.local
+    labels:
+      { internal.dockerhosts.hostname: egress-1.e621stream.containers.local }
+  # docker compose run --rm tests. gets its own database and redis db, and never talks to e621
+  tests:
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: e621stream
+    profiles: [test]
+    init: true
+    command: bun test
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://e621stream:@postgres:5432/e621stream_test?sslmode=disable
+      REDIS_URL: redis://redis:6379/15
+      REDIS_PREFIX: "e621stream-test:"
+      # nothing's listening there, so anything that does try to reach e621 fails fast
+      E621_BASE_URL: http://127.0.0.1:9
+      E621_AUTH_USER: tests
+      E621_AUTH_KEY: tests
+      ENCRYPTION_KEY: tests
+      ENCRYPTION_SALT: tests
+      HMAC_KEY: tests
+      HTTP_PORT: 4100
+      GATEWAY_PORT: 4101
+      PUBLIC_URL: http://127.0.0.1:4100
+      PUBLIC_WS_URL: ws://127.0.0.1:4101/ws
+      LOG_DIR: /tmp/logs
+      LOG_EVENTS: "false"
+    # the working tree rather than what's in the image, which only needs rebuilding for dependencies
+    volumes:
+      - ./src:/app/src:ro
+      - ./test:/app/test:ro
+      - ./db:/app/db:ro
+      - ./bunfig.toml:/app/bunfig.toml:ro
+  redis:
+    image: redis:8.10.3-alpine3.23
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy volatile-lru
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 2s
+      retries: 10
+    hostname: redis.e621stream.containers.local
+    labels:
+      - "internal.dockerhosts.hostname=redis.e621stream.containers.local"
+  postgres:
+    image: postgres:18.7-alpine3.24
+    restart: always
+    environment:
+      - POSTGRES_USER=e621stream
+      - POSTGRES_DB=e621stream
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - PGDATA=/var/lib/postgresql/data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    shm_size: 256mb
+    healthcheck:
+      test: pg_isready -U e621stream -d e621stream
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    hostname: postgres.e621stream.containers.local
+    labels:
+      { internal.dockerhosts.hostname: postgres.e621stream.containers.local }
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-e621stream
+
+volumes:
+  redis_data:
+  postgres_data:

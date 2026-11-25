@@ -1,0 +1,14 @@
+.feed-scale {
+    width: 4.5rem;
+}
+
+// the text lines up with the buttons, data-table puts everything at the top
+.feed-table td {
+    vertical-align: middle;
+}
+
+// only as wide as the buttons, the forms under them fit in that
+.feed-table .feed-actions {
+    width: 1%;
+    white-space: nowrap;
+}

@@ -1,0 +1,6 @@
+--dir
+.
+--ignore=test/
+--ignore=tmp/
+--ignore=vendor/
+--parser=prism

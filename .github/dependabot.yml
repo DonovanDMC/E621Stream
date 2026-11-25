@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    assignees:
+      - "DonovanDMC"
+    commit-message:
+      include: "scope"
+      prefix: ""
+    target-branch: "master"
+    versioning-strategy: "increase"
+    labels:
+      - "dependencies"

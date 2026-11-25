@@ -1,0 +1,27 @@
+@use "colors";
+
+.flash-message pre {
+    margin: 0.5rem 0 0;
+}
+
+main {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 24px 16px 64px;
+}
+
+// bordered with a shaded header like the old status page, easier to follow across wide rows
+.data-table {
+    margin: 12px 0;
+    font-size: 0.9em;
+    font-variant-numeric: tabular-nums;
+
+    th {
+        --bs-table-bg: var(--bs-tertiary-bg);
+        white-space: nowrap;
+    }
+
+    td, th {
+        vertical-align: top;
+    }
+}

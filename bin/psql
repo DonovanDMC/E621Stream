@@ -1,0 +1,3 @@
+#!/bin/sh
+# Runs psql inside the postgres container so the dump matches the server version.
+exec docker compose -f "$(dirname "$0")/../docker-compose.yml" exec -T postgres psql "$@"

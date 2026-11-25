@@ -1,0 +1,15 @@
+name: Build Code
+permissions:
+    contents: read
+on: [push, pull_request, workflow_call]
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+            - uses: oven-sh/setup-bun@v2
+            - run: bun i --frozen-lockfile --ignore-scripts
+            # bun runs the source as-is, so this and the image are the build
+            - run: bun run typecheck
+            - run: docker build --build-arg GIT_COMMIT=${{ github.sha }} .

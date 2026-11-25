@@ -1,0 +1,49 @@
+// what the old docs pages looked like, inside the site's layout
+.docs {
+    h2 {
+        margin-top: 40px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--bs-border-color);
+    }
+
+    h3 {
+        margin-top: 28px;
+    }
+
+    pre {
+        background: var(--bs-tertiary-bg);
+        padding: 12px;
+        border-radius: 4px;
+        overflow-x: auto;
+    }
+
+    // the first heading is the page title
+    > h1:first-child {
+        margin-top: 0;
+    }
+}
+
+.docs-nav .nav-link.active {
+    color: var(--bs-emphasis-color);
+    font-weight: 600;
+}
+
+// the open page's sections, under its link
+.docs-sections {
+    margin: 0 0 8px 12px;
+    padding-left: 10px;
+    border-left: 1px solid var(--bs-border-color);
+    font-size: 0.875rem;
+
+    .nav-link {
+        color: var(--bs-secondary-color);
+
+        &:hover {
+            color: var(--bs-emphasis-color);
+        }
+    }
+
+    .docs-section-sub {
+        padding-left: 12px !important;
+    }
+}
