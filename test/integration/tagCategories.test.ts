@@ -35,8 +35,16 @@ test("ones we don't have are looked up once, and remembered for a while", async 
     const [first] = await categorize([post(1, ["fox", "new_artist", "gone_tag"])], lookup);
     expect(first!.tags).toMatchObject({ species: ["fox"], artist: ["new_artist"], general: ["gone_tag"] });
     await categorize([post(2, ["new_artist"])], lookup);
-    // only gone_tag is asked about again, e621 didn't have it either
+    // gone_tag isn't asked about again either, even though e621 didn't have it
     expect(asked).toEqual([["new_artist", "gone_tag"]]);
+    await categorize([post(3, ["gone_tag"])], lookup);
+    expect(asked).toHaveLength(1);
+});
+
+test("without a lookup, ones we don't have are general", async () => {
+    await saveSnapshots("tag", [tag(1, "fox", 5)]);
+    const [result] = await categorize([post(1, ["fox", "unknown_tag"])], null);
+    expect(result!.tags).toMatchObject({ species: ["fox"], general: ["unknown_tag"] });
 });
 
 test("the rest of the post is kept", async () => {

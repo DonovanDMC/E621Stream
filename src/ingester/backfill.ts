@@ -50,7 +50,7 @@ const crawl = <R extends SnapshotResourceType>(source: SnapshotCrawl<R>): Crawl 
 export const CRAWLS: Array<Crawl> = [
     // first, posts are fetched basic once every tag is here to put theirs in categories
     crawl({ name: "tags", resource: "tag", cursor: "tags", search: page => e621.tags.search(page) }),
-    crawl({ name: "posts", resource: "post", cursor: "posts:max_id", ownRequests: true, search: async page => searchPosts("backfill posts", { ...page, tags: "status:any" }, backfillQueue) }),
+    crawl({ name: "posts", resource: "post", cursor: "posts:max_id", ownRequests: true, search: async page => searchPosts("backfill posts", { ...page, tags: "status:any" }, backfillQueue, false) }),
     crawl({ name: "comments", resource: "comment", cursor: "comments", search: page => e621.comments.search({ ...page, group_by: "comment" }) }),
     crawl({ name: "forum_posts", resource: "forum_post", cursor: "forum_posts", search: page => e621.forumPosts.search(page) }),
     crawl({ name: "forum_topics", resource: "forum_topic", cursor: "forum_topics", search: page => e621.forumTopics.search(page) }),

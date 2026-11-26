@@ -41,9 +41,10 @@ async function storedCategories(names: Array<string>): Promise<Map<string, numbe
 
 /**
  * Basic posts' tags put into categories like an extended post's, from the tags we've stored.
- * The few we don't have yet, like ones made by the edit being looked at, are asked for in one search
+ * The few we don't have yet, like ones made by the edit being looked at, are asked for in one search.
+ * Without a lookup they're general, the backfill doesn't look them up since tags it's missing are ones e621's tag search doesn't have either
  */
-export async function categorize(posts: Array<E621.BasicPost>, lookup: Lookup = searchTags): Promise<Array<E621.ExtendedPost>> {
+export async function categorize(posts: Array<E621.BasicPost>, lookup: Lookup | null = searchTags): Promise<Array<E621.ExtendedPost>> {
     const names = [...new Set(posts.flatMap(post => post.tags))];
     const categories = await storedCategories(names);
     const now = Date.now();
@@ -52,11 +53,14 @@ export async function categorize(posts: Array<E621.BasicPost>, lookup: Lookup = 
         else if (!categories.has(name)) categories.set(name, entry.category);
     }
     const missing = names.filter(name => !categories.has(name));
-    if (missing.length !== 0) {
+    if (missing.length !== 0 && lookup) {
         Debug("ingester:tags", `looking up ${missing.length} tag(s) we don't have`);
-        for (const tag of await lookup(missing)) {
-            categories.set(tag.name, tag.category);
-            lookedUp.set(tag.name, { at: now, category: tag.category });
+        const found = await lookup(missing);
+        for (const name of missing) {
+            // ones e621 didn't find are remembered too, so they aren't asked about every time they show up
+            const category = found.find(tag => tag.name === name)?.category ?? 0;
+            categories.set(name, category);
+            lookedUp.set(name, { at: now, category });
         }
     }
     return posts.map((post) => {
@@ -84,10 +88,10 @@ export async function useBasicPosts(): Promise<boolean> {
  * Posts with their tags in categories, basic when it can be since that's lighter on e621.
  * Makes its own request, don't call it inside one: looking up tags while holding a request's slot deadlocked the queue
  */
-export async function searchPosts(description: string, options: { limit: number; page: number | `b${number}`; tags: string }, queue?: Scheduler): Promise<Array<E621.ExtendedPost>> {
+export async function searchPosts(description: string, options: { limit: number; page: number | `b${number}`; tags: string }, queue?: Scheduler, lookupTags = true): Promise<Array<E621.ExtendedPost>> {
     if (await useBasicPosts()) {
         const posts = await request(description, async () => e621.posts.search({ ...options, mode: "basic" }), queue);
-        return categorize(posts);
+        return categorize(posts, lookupTags ? searchTags : null);
     }
     return request(description, async () => e621.posts.search({ ...options, mode: "extended" }), queue);
 }
