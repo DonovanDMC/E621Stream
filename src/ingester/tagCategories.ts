@@ -23,7 +23,7 @@ const searchTags: Lookup = async (names) => {
     const found: Array<Pick<E621.Tag, "category" | "name">> = [];
     for (let i = 0; i < names.length; i += LOOKUP_CHUNK) {
         const chunk = names.slice(i, i + LOOKUP_CHUNK);
-        found.push(...await request("tags by name", () => e621.tags.search({ name: chunk.join(","), limit: chunk.length })));
+        found.push(...await request("tags by name", () => e621.tags.search({ name: chunk.join(","), hide_empty: false, limit: chunk.length })));
     }
     return found;
 };
@@ -42,7 +42,7 @@ async function storedCategories(names: Array<string>): Promise<Map<string, numbe
 /**
  * Basic posts' tags put into categories like an extended post's, from the tags we've stored.
  * The few we don't have yet, like ones made by the edit being looked at, are asked for in one search.
- * Without a lookup they're general, the backfill doesn't look them up since tags it's missing are ones e621's tag search doesn't have either
+ * Without a lookup they're general. The backfill doesn't look them up, the tags backfill stores every tag first
  */
 export async function categorize(posts: Array<E621.BasicPost>, lookup: Lookup | null = searchTags): Promise<Array<E621.ExtendedPost>> {
     const names = [...new Set(posts.flatMap(post => post.tags))];

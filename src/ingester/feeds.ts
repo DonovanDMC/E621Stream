@@ -67,7 +67,8 @@ export const FEEDS: Array<FeedSource> = [
     feed({ name: "post_approvals", event: "post_approval.create", intervalMS: 20_000, search: page => e621.postApprovals.search(page) }),
     feed({ name: "upload_karma_events", event: "upload_karma_event.create", intervalMS: 20_000, search: page => e621.uploadKarmaEvents.search(page) }),
     feed({ name: "users", snapshot: "user", event: "user.create", intervalMS: 60_000, search: page => e621.users.search(page) }),
-    feed({ name: "tags", snapshot: "tag", event: "tag.create", intervalMS: 60_000, search: page => e621.tags.search(page) }),
+    // empty tags are hidden by default, but they're still on deleted posts
+    feed({ name: "tags", snapshot: "tag", event: "tag.create", intervalMS: 60_000, search: page => e621.tags.search({ ...page, hide_empty: false }) }),
     feed({ name: "pools", snapshot: "pool", event: "pool.create", intervalMS: 60_000, search: page => e621.pools.search(page) }),
     feed({ name: "post_sets", snapshot: "post_set", event: "post_set.create", intervalMS: 60_000, search: page => e621.postSets.search(page), private: isPrivateSet }),
     feed({ name: "wiki_pages", snapshot: "wiki_page", event: "wiki_page.create", intervalMS: 60_000, search: page => e621.wikiPages.search(page) }),

@@ -49,7 +49,8 @@ const crawl = <R extends SnapshotResourceType>(source: SnapshotCrawl<R>): Crawl 
 // every resource something is built from, straight from the api so they're the same as what it returns
 export const CRAWLS: Array<Crawl> = [
     // first, posts are fetched basic once every tag is here to put theirs in categories
-    crawl({ name: "tags", resource: "tag", cursor: "tags", search: page => e621.tags.search(page) }),
+    // empty tags are hidden by default, but they're still on deleted posts
+    crawl({ name: "tags", resource: "tag", cursor: "tags", search: page => e621.tags.search({ ...page, hide_empty: false }) }),
     crawl({ name: "posts", resource: "post", cursor: "posts:max_id", ownRequests: true, search: async page => searchPosts("backfill posts", { ...page, tags: "status:any" }, backfillQueue, false) }),
     crawl({ name: "comments", resource: "comment", cursor: "comments", search: page => e621.comments.search({ ...page, group_by: "comment" }) }),
     crawl({ name: "forum_posts", resource: "forum_post", cursor: "forum_posts", search: page => e621.forumPosts.search(page) }),
