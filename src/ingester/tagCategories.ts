@@ -1,5 +1,5 @@
 import Debug from "@yiffy/debug";
-import { TagCategoryNamesSchema, TagCategorySchema } from "e621-openapi/schemas";
+import { TagCategorySchema } from "e621-openapi/schemas";
 
 import DB from "../db/DB.ts";
 import Backfill from "../db/models/Backfill.ts";
@@ -7,11 +7,8 @@ import { e621, request } from "../util/e621.ts";
 
 import type * as E621 from "e621-openapi/types";
 
-// from the spec, its id and name lists are in the same order
-// always equal with this spec's types, it's for when a new one doesn't add a category to both
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-if (TagCategorySchema.enum.length !== TagCategoryNamesSchema.enum.length) throw new Error("e621-openapi's tag category ids and names don't line up");
-const CATEGORIES = new Map<number, E621.TagCategoryNames>(TagCategorySchema.enum.map((id, i) => [id, TagCategoryNamesSchema.enum[i]!]));
+// the spec names each id
+const CATEGORIES = new Map<number, E621.TagCategoryNames>(TagCategorySchema.enum.map((id, i) => [id, TagCategorySchema["x-enum-varnames"][i]!]));
 type Categories = E621.ExtendedPost["tags"];
 
 // names per tag search, the names all go in the url
