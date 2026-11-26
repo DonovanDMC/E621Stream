@@ -1,0 +1,5 @@
+// the toggle under a client's subscriptions says what it'll do
+.subs-toggle.collapsed .when-expanded,
+.subs-toggle:not(.collapsed) .when-collapsed {
+    display: none;
+}

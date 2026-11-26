@@ -21,7 +21,7 @@ export interface ClientsProps {
 
 export default function Clients({ admins, clients }: ClientsProps): JSX.Element {
     return (
-        <Main title="Clients">
+        <Main title="Clients" styles={["pages/clients"]}>
             <h1 class="h3">Clients ({clients.length})</h1>
             <p class="text-body-secondary">Everyone connected to every gateway. Dropped clients can still reconnect, ban them to stop that.</p>
             {clients.length === 0 ? <p>Nobody's connected.</p> : <ClientList admins={admins} clients={clients} />}
@@ -73,7 +73,8 @@ function Subscriptions({ id, subscriptions }: { id: string; subscriptions: Liste
     if (subscriptions.length === 0) return <span class="text-body-secondary">none</span>;
     const items = subscriptions.map((sub) => {
         const types = [...sub.types, ...sub.privateTypes].join(", ");
-        if (!sub.filter) return <div><code safe>{types}</code></div>;
+        // unfiltered ones still have an empty filter
+        if (!sub.filter || Object.values(sub.filter).every(value => value === undefined)) return <div><code safe>{types}</code></div>;
         return (
             <details>
                 <summary><code safe>{types}</code></summary>
@@ -86,7 +87,11 @@ function Subscriptions({ id, subscriptions }: { id: string; subscriptions: Liste
         <>
             {items.slice(0, SHOWN_SUBSCRIPTIONS)}
             <div class="collapse" id={`subs-${id}`}>{items.slice(SHOWN_SUBSCRIPTIONS)}</div>
-            <a href={`#subs-${id}`} data-bs-toggle="collapse" role="button" aria-expanded="false">{items.length - SHOWN_SUBSCRIPTIONS} more</a>
+            {/* bootstrap toggles collapsed on the link, which picks the label */}
+            <a class="collapsed subs-toggle" href={`#subs-${id}`} data-bs-toggle="collapse" role="button" aria-expanded="false">
+                <span class="when-collapsed">{items.length - SHOWN_SUBSCRIPTIONS} more</span>
+                <span class="when-expanded">show less</span>
+            </a>
         </>
     );
 }
