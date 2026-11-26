@@ -8,6 +8,8 @@ const env = parseEnv("ingester", z.object({
     INGESTER_POLL_INTERVAL_SCALE: z.coerce.number().int().positive().default(1), // multiplier
     INGESTER_IDLE_POLL_SCALE: z.coerce.number().int().positive().default(10), // multiplier
     INGESTER_LATENCY_ALERT_MS: z.coerce.number().int().positive().default(2000), // median over 5 minutes
+    // every this many requests one goes to the backfill (or a recovery) when it's waiting, 0 only gives it what the feeds don't use
+    INGESTER_BACKFILL_SHARE: z.coerce.number().int().nonnegative().default(4),
 }));
 
 const IngesterConfig = {
@@ -16,6 +18,7 @@ const IngesterConfig = {
     pollIntervalScale: env.INGESTER_POLL_INTERVAL_SCALE,
     idlePollScale: env.INGESTER_IDLE_POLL_SCALE,
     latencyAlertMS: env.INGESTER_LATENCY_ALERT_MS,
+    backfillShare: env.INGESTER_BACKFILL_SHARE,
 } as const;
 
 export default IngesterConfig;

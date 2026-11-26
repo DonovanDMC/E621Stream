@@ -4,6 +4,7 @@ import E621, { OAuthClient, RatelimitError, UnexpectedResponseError } from "e621
 import Config from "../config/Config.ts";
 import GatewayConfig from "../config/GatewayConfig.ts";
 import HTTPConfig from "../config/HTTPConfig.ts";
+import IngesterConfig from "../config/IngesterConfig.ts";
 import { isRecovering } from "../gateway/recovery.ts";
 
 import { E621_REQUEST_TIMEOUT } from "./Constants.ts";
@@ -42,7 +43,7 @@ async function backoff(attempt: number, reason: string): Promise<void> {
     await Bun.sleep(ms);
 }
 
-export const ingestQueue = new RequestQueue(Config.e621RequestInterval, true);
+export const ingestQueue = new RequestQueue(Config.e621RequestInterval, true, IngesterConfig.backfillShare);
 export const authQueue = new RequestQueue(Config.e621AuthRequestInterval, true);
 export const privateQueue = new RequestQueue(GatewayConfig.privateRequestInterval, true);
 export const backfillQueue = ingestQueue.background;

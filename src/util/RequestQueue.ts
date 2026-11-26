@@ -16,16 +16,20 @@ async function reserve(): Promise<number> {
 export interface Scheduler { schedule<T>(fn: () => Promise<T>): Promise<T> }
 export default class RequestQueue implements Scheduler {
     background: Scheduler = { schedule: fn => this.enqueue(fn, true) };
+    /** Every this many starts one is background if any are waiting, so it isn't starved by a busy foreground. 0 turns it off */
+    backgroundShare: number;
     inFlight = 0;
     interval: number;
     lastStart = 0;
     reserving = false;
     shared: boolean;
+    sinceBackground = 0;
     timer: NodeJS.Timeout | null = null;
     waiting: Array<{ background: boolean; start(): void }> = [];
-    constructor(interval: number, shared = false) {
+    constructor(interval: number, shared = false, backgroundShare = 0) {
         this.interval = interval;
         this.shared = shared;
+        this.backgroundShare = backgroundShare;
     }
 
     private enqueue<T>(fn: () => Promise<T>, background: boolean): Promise<T> {
@@ -74,8 +78,11 @@ export default class RequestQueue implements Scheduler {
 
     private startNext(): void {
         const foreground = this.waiting.findIndex(item => !item.background);
-        const [next] = this.waiting.splice(foreground === -1 ? 0 : foreground, 1);
+        const background = this.waiting.findIndex(item => item.background);
+        const due = this.backgroundShare > 0 && background !== -1 && this.sinceBackground >= this.backgroundShare - 1;
+        const [next] = this.waiting.splice(due || foreground === -1 ? Math.max(background, 0) : foreground, 1);
         if (!next) return;
+        this.sinceBackground = next.background ? 0 : this.sinceBackground + 1;
         this.lastStart = Date.now();
         next.start();
         this.pump();
