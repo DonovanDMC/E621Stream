@@ -95,6 +95,8 @@ e621 seems to handle requests from each ip one at a time, so a slow request hold
 ### Backfill
 Updates need the previous copy of something to say what changed, so with `INGESTER_BACKFILL=true` the ingester stores everything from before its feeds started, through the api, newest first, using only the requests polling doesn't need. Posts alone are around 17,000 requests, so the first run takes a while, the status page and `e621stream backfill status` show how far it's got.
 
+Tags are backfilled first. Once they're done, posts are fetched in e621's lighter `basic` mode and their tags are put into categories from the tags we've stored, the few we don't have yet (like ones the edit just made) are looked up by name. Until then posts are fetched `extended`.
+
 ### Recoveries
 If the ingester misses something (e621 being down for a while, or a bug), an admin can go back over that window from the admin page. What wasn't sent the first time is sent with `"recovered": true`, and clients are told when one starts and ends.
 

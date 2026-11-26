@@ -10,6 +10,7 @@ import { backfillQueue, e621, request } from "../util/e621.ts";
 import { count } from "../util/metrics.ts";
 
 import { isPrivateSet } from "./feeds.ts";
+import { searchPosts } from "./tagCategories.ts";
 
 import type * as E621 from "e621-openapi/types";
 
@@ -44,7 +45,9 @@ const crawl = <R extends SnapshotResourceType>(source: SnapshotCrawl<R>): Crawl 
 
 // every resource something is built from, straight from the api so they're the same as what it returns
 export const CRAWLS: Array<Crawl> = [
-    crawl({ name: "posts", resource: "post", cursor: "posts:max_id", search: async page => await e621.posts.search({ ...page, tags: "status:any", mode: "extended" }) as Array<SnapshotTypeMap["post"]> }),
+    // first, posts are fetched basic once every tag is here to put theirs in categories
+    crawl({ name: "tags", resource: "tag", cursor: "tags", search: page => e621.tags.search(page) }),
+    crawl({ name: "posts", resource: "post", cursor: "posts:max_id", search: async page => searchPosts({ ...page, tags: "status:any" }) }),
     crawl({ name: "comments", resource: "comment", cursor: "comments", search: page => e621.comments.search({ ...page, group_by: "comment" }) }),
     crawl({ name: "forum_posts", resource: "forum_post", cursor: "forum_posts", search: page => e621.forumPosts.search(page) }),
     crawl({ name: "forum_topics", resource: "forum_topic", cursor: "forum_topics", search: page => e621.forumTopics.search(page) }),
@@ -61,7 +64,6 @@ export const CRAWLS: Array<Crawl> = [
     crawl({ name: "wiki_pages", resource: "wiki_page", cursor: "wiki_pages", search: page => e621.wikiPages.search(page) }),
     crawl({ name: "artists", resource: "artist", cursor: "artists", search: page => e621.artists.search(page) }),
     crawl({ name: "artist_urls", resource: "artist_url", cursor: "artist_urls", search: page => e621.artistUrls.search(page) }),
-    crawl({ name: "tags", resource: "tag", cursor: "tags", search: page => e621.tags.search(page) }),
     crawl({ name: "avoid_postings", resource: "avoid_posting", cursor: "avoid_postings", search: page => e621.avoidPostings.search(page) }),
     crawl({ name: "user_feedbacks", resource: "user_feedback", cursor: "user_feedbacks", search: page => e621.userFeedbacks.search(page) }),
     crawl({ name: "bans", resource: "ban", cursor: "bans", search: page => e621.bans.search(page) }),

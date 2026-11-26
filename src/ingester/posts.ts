@@ -8,6 +8,8 @@ import { getRecovery, isActive } from "../gateway/recovery.ts";
 import { getSnapshots, saveSnapshots } from "../gateway/snapshots.ts";
 import { e621, request } from "../util/e621.ts";
 
+import { searchPosts } from "./tagCategories.ts";
+
 import type { PollResult } from "./feedLog.ts";
 import type { Checkpoint } from "./recovery.ts";
 import type * as E621 from "e621-openapi/types";
@@ -28,7 +30,7 @@ const MAX_POST_ID = 2_147_483_647;
 // a/b id paging doesn't work with order: tags, so these are numbered pages.
 // status:any is needed, deleted posts are invisible to every search otherwise
 async function search(tags: string, limit: number, page: number): Promise<Array<E621.ExtendedPost>> {
-    return request("posts", () => e621.posts.search({ tags: `${tags} status:any`, limit, page, mode: "extended" }));
+    return request("posts", () => searchPosts({ tags: `${tags} status:any`, limit, page }));
 }
 
 // a post's updated_at and its newest version are from the same save
