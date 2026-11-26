@@ -1,9 +1,11 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import DB from "../../src/db/DB.ts";
-import { publish } from "../../src/gateway/events.ts";
+import Redis from "../../src/db/Redis.ts";
+import { publish, streamKey } from "../../src/gateway/events.ts";
 import { CloseCodes } from "../../src/gateway/protocol.ts";
 import { saveSnapshots } from "../../src/gateway/snapshots.ts";
+import { archive } from "../../src/ingester/archive.ts";
 import { closeSockets, reset, startService, stopService, TestSocket, tokenUser } from "../helpers.ts";
 
 const PORT = 4201, BASE = `ws://127.0.0.1:${PORT}/ws`, URL = `${BASE}?v=2`;
@@ -144,6 +146,26 @@ describe("events", () => {
         // then live
         const live = await publish("post.update", "2026-11-01T00:00:00Z", post(4));
         expect((await socket.next("dispatch")).s).toBe(live);
+    });
+
+    test("replays reach back past the stream into the history", async () => {
+        const first = await publish("post.update", "2026-11-01T00:00:00Z", post(1));
+        const second = await publish("post.update", "2026-11-01T00:00:00Z", post(2));
+        await archive();
+        await Redis.send("XDEL", [streamKey, first, second]);
+        const third = await publish("post.update", "2026-11-01T00:00:00Z", post(3));
+        const socket = new TestSocket(URL);
+        expect((await socket.identify({ auth: { token }, subscriptions: ["post.*"], cursor: first })).d).toMatchObject({ replaying: true, cursor_expired: false });
+        expect((await socket.next("dispatch")).s).toBe(second);
+        expect((await socket.next("dispatch")).s).toBe(third);
+        expect((await socket.next("replay_complete")).d).toMatchObject({ events: 2, cursor: third });
+    });
+
+    test("cursors older than the history are expired", async () => {
+        await publish("post.update", "2026-11-01T00:00:00Z", post(1));
+        await archive();
+        const socket = new TestSocket(URL);
+        expect((await socket.identify({ auth: { token }, subscriptions: ["post.*"], cursor: 1 })).d).toMatchObject({ replaying: true, cursor_expired: true });
     });
 
     test("bad cursors close the connection", async () => {

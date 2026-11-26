@@ -96,7 +96,7 @@ export default function DatabaseStats({ stats }: { stats: Stats }): JSX.Element 
                 <tr><td>Memory</td><td>{bytes(stats.redis.used)}</td></tr>
                 <tr><td>Peak memory</td><td>{bytes(stats.redis.peak)}</td></tr>
                 <tr><td>Keys</td><td>{num(stats.redis.keys)}</td></tr>
-                <tr><td>Events in the stream</td><td>{num(stats.redis.stream)}</td></tr>
+                <tr><td>Events in the live stream</td><td>{num(stats.redis.stream)}</td></tr>
             </Table>
         </Main>
     );

@@ -2,8 +2,9 @@ import pkg from "../../package.json";
 import Config from "../config/Config.ts";
 import IngesterConfig from "../config/IngesterConfig.ts";
 import Backfill from "../db/models/Backfill.ts";
-import Redis, { type StreamEntry } from "../db/Redis.ts";
-import { latestEvent, streamKey } from "../gateway/events.ts";
+import Redis from "../db/Redis.ts";
+import { latestEvent } from "../gateway/events.ts";
+import { oldestID, splitID, storedCount } from "../gateway/history.ts";
 import { getRecovery, getRecoveryHistory, isActive, type Recovery } from "../gateway/recovery.ts";
 import { getSlowMode } from "../gateway/slowMode.ts";
 import { getDataCounts } from "../ingester/data.ts";
@@ -176,8 +177,8 @@ async function build(): Promise<StatusData> {
         recent("minute", 60),
         recent("hour", 24),
         totals(),
-        Redis.send("XLEN", [streamKey]) as Promise<number>,
-        Redis.send("XRANGE", [streamKey, "-", "+", "COUNT", "1"]) as Promise<Array<StreamEntry>>,
+        storedCount(),
+        oldestID(),
         latestEvent().then(event => event?.time ?? null),
         Redis.get(`${Config.redisPrefix}ingester:started_at`),
         Redis.get(`${Config.redisPrefix}ingester:version`),
@@ -227,8 +228,8 @@ async function build(): Promise<StatusData> {
             ...totalsOf(eventsOf, hour, day, allTime),
             per_minute_last_hour: Math.round(eventsOf(hour) / 60 * 10) / 10,
             retained,
-            // stream ids start with the time they were added
-            oldest_retained_at: oldest[0] ? new Date(Number(oldest[0][0].split("-")[0])).toISOString() : null,
+            // ids start with the time they were added
+            oldest_retained_at: oldest ? new Date(splitID(oldest)[0]).toISOString() : null,
             last_event_at: lastEvent,
             by_type: types.map(type => ({ type, last_hour: hour[`events.${type}`] ?? 0, last_24h: day[`events.${type}`] ?? 0, total: allTime[`events.${type}`] ?? 0 })).toSorted((a, b) => b.total - a.total || a.type.localeCompare(b.type)),
             per_minute: minutes.map(m => ({ at: new Date(m.at).toISOString(), events: eventsOf(m.counts) })),

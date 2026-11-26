@@ -1,8 +1,8 @@
 import Debug from "@yiffy/debug";
 
 import IngesterConfig from "../config/IngesterConfig.ts";
-import Redis, { parseEntry, type StreamEntry } from "../db/Redis.ts";
-import { publishNotice, streamKey } from "../gateway/events.ts";
+import { publishNotice } from "../gateway/events.ts";
+import { itemsAfter } from "../gateway/history.ts";
 import { getRecovery, recoveryContext, saveRecovery, type Recovery } from "../gateway/recovery.ts";
 
 import { Feed, FEEDS } from "./feeds.ts";
@@ -36,18 +36,15 @@ async function alreadySent(from: number, sources: Array<string>): Promise<Map<st
     const types = new Map<string, Array<number>>(FEEDS.filter(source => sources.includes(source.name)).map(source => [source.event, []]));
     if (sources.includes("posts")) types.set("post.create", []);
     if (types.size === 0) return types;
-    let start = `${from}-0`;
-    for (;;) {
-        const entries = await Redis.send("XRANGE", [streamKey, start, "+", "COUNT", String(STREAM_PAGE)]) as Array<StreamEntry>;
-        for (const entry of entries) {
-            const item = parseEntry(entry);
-            if (!item || "notice" in item) continue;
-            const id = (item).data.id;
+    // a millisecond early, so ones at exactly from aren't missed
+    for await (const items of itemsAfter(`${from - 1}-0`, STREAM_PAGE)) {
+        for (const item of items) {
+            if ("notice" in item) continue;
+            const id = item.data.id;
             if (typeof id === "number") types.get(item.type)?.push(id);
         }
-        if (entries.length < STREAM_PAGE) return types;
-        start = `(${entries.at(-1)![0]}`;
     }
+    return types;
 }
 
 const total = (recovery: Recovery): number => Object.values(recovery.progress).reduce((sum, progress) => sum + progress.events, 0);

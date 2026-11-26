@@ -50,8 +50,7 @@ function filterTable(): string {
 }
 
 function replay(): string {
-    const limit = Config.replayLimit.toLocaleString("en-US");
-    return Config.replayPeriod === 0 ? `The last ${limit} events are kept.` : `Events are kept for ${Config.replayPeriod} hours, up to ${limit} of them.`;
+    return Config.replayPeriod === 0 ? "Every event is kept." : `Events are kept for ${Config.replayPeriod} hours.`;
 }
 
 // filled in when the pages are loaded, so the limits always match the config

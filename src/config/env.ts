@@ -36,6 +36,7 @@ const RENAMED: Record<string, string> = {
     IDLE_POLL_SCALE: "INGESTER_IDLE_POLL_SCALE",
     LATENCY_ALERT_MS: "INGESTER_LATENCY_ALERT_MS",
     E621_EGRESS_FAMILY: "EGRESS_FAMILY",
+    REPLAY_LIMIT: "STREAM_MAX_LENGTH",
 };
 
 // z.coerce would convert "" to 0/false/etc

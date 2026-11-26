@@ -6,7 +6,6 @@ import Config from "../config/Config.ts";
 import GatewayConfig from "../config/GatewayConfig.ts";
 import Snapshot from "../db/models/Snapshot.ts";
 import User from "../db/models/User.ts";
-import Redis, { parseEntry, type StreamEntry } from "../db/Redis.ts";
 import { parseToken } from "../http/OAuth.tsx";
 import { GATEWAY_CLIENT_NAME_LIMIT, GATEWAY_MAX_BACKLOG } from "../util/Constants.ts";
 import { fingerprint } from "../util/HMAC.ts";
@@ -14,8 +13,9 @@ import I18n from "../util/I18n.ts";
 
 import { verify, type Credentials, type E621User, type VerifyResult } from "./auth.ts";
 import { StreamCompressor, type CompressionType } from "./compression.ts";
-import { EVENT_TYPES, PRIVATE_EVENT_TYPES, streamKey, type StreamEvent, type StreamItem, type StreamNotice } from "./events.ts";
+import { EVENT_TYPES, PRIVATE_EVENT_TYPES, type StreamEvent, type StreamItem, type StreamNotice } from "./events.ts";
 import { compileSubscription, FilterError, filterMatches, type CompiledSubscription } from "./filter.ts";
+import { itemsAfter, oldestID } from "./history.ts";
 import { isBanned } from "./management.ts";
 import { removePrivate, updatePrivate, type PrivateEvent, type PrivateMember } from "./private.ts";
 import { ClientOPCodes, CloseCodes, compareIDs, DecodeError, OPCodes, parseCursor, parseSnapshotRequest, PROTOCOL_VERSION, type ClientMessage, type Identify, type SnapshotRequest } from "./protocol.ts";
@@ -306,8 +306,8 @@ export default class Session {
         }
 
         this.state = "replaying";
-        const [oldest] = await Redis.send("XRANGE", [streamKey, "-", "+", "COUNT", "1"]) as Array<StreamEntry>;
-        const expired = oldest !== undefined && compareIDs(cursor, oldest[0]) < 0;
+        const oldest = await oldestID();
+        const expired = oldest !== null && compareIDs(cursor, oldest) < 0;
         await this.send({
             op: OPCodes.Ready,
             d: {
@@ -360,21 +360,16 @@ export default class Session {
     private async replay(cursor: string): Promise<void> {
         let from = cursor;
         let sent = 0;
-        for (;;) {
-            const entries = await Redis.send("XRANGE", [streamKey, `(${from}`, "+", "COUNT", String(GatewayConfig.replayBatchSize)]) as Array<StreamEntry>;
+        for await (const items of itemsAfter(cursor, GatewayConfig.replayBatchSize)) {
             if (this.isNot("replaying")) return;
-            for (const entry of entries) {
-                const event = parseEntry(entry);
-                from = entry[0];
-                if (event) {
-                    if (isNotice(event)) {
-                        if (await this.deliverNotice(event)) sent++;
-                    } else {
-                        if (await this.deliver(event)) sent++;
-                    }
+            for (const event of items) {
+                from = event.id;
+                if (isNotice(event)) {
+                    if (await this.deliverNotice(event)) sent++;
+                } else {
+                    if (await this.deliver(event)) sent++;
                 }
             }
-            if (entries.length < GatewayConfig.replayBatchSize) break;
             while (this.is("replaying") && this.buffered() > (GatewayConfig.maxBufferedBytes / 2)) await Bun.sleep(50);
             if (this.isNot("replaying")) return;
         }

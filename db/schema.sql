@@ -101,6 +101,20 @@ CREATE TABLE public.backfill (
 
 
 --
+-- Name: events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.events (
+    ms bigint NOT NULL,
+    seq bigint NOT NULL,
+    type text NOT NULL,
+    item json NOT NULL
+)
+PARTITION BY RANGE (ms);
+ALTER TABLE ONLY public.events ALTER COLUMN item SET COMPRESSION lz4;
+
+
+--
 -- Name: gateway_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -271,6 +285,14 @@ ALTER TABLE ONLY public.api_key_logins
 
 ALTER TABLE ONLY public.backfill
     ADD CONSTRAINT backfill_pkey PRIMARY KEY (source);
+
+
+--
+-- Name: events events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.events
+    ADD CONSTRAINT events_pkey PRIMARY KEY (ms, seq);
 
 
 --
@@ -497,4 +519,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261113140005'),
     ('20261113140006'),
     ('20261113140007'),
-    ('20261113140008');
+    ('20261113140008'),
+    ('20261126205135');

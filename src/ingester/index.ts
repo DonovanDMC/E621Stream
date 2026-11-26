@@ -3,13 +3,13 @@ import Debug from "@yiffy/debug";
 import Config from "../config/Config.ts";
 import IngesterConfig from "../config/IngesterConfig.ts";
 import Redis from "../db/Redis.ts";
-import { streamKey } from "../gateway/events.ts";
 import { AuthError } from "../util/errors.ts";
 import { startLogging } from "../util/FileLog.ts";
 import { startLatencyWatch } from "../util/latency.ts";
 import { markTrackingStart } from "../util/metrics.ts";
 import { checkServices } from "../util/util.ts";
 
+import { startArchive } from "./archive.ts";
 import { startBackfill } from "./backfill.ts";
 import { feedScale, isPaused, startControlWatch } from "./control.ts";
 import { startDataCounts } from "./data.ts";
@@ -23,6 +23,8 @@ import { UpdateFeed, UPDATES } from "./updates.ts";
 
 await startLogging("ingester");
 await checkServices();
+// before anything's written to redis, so a stream that filled it is trimmed first
+await startArchive();
 
 interface Pollable {
     source: { intervalMS: number; name: string };
@@ -33,7 +35,6 @@ const AUTH_RETRY_MS = 60 * 60 * 1000;
 // paused feeds are woken when they're resumed, this is just in case that's missed
 const PAUSED_CHECK_MS = 60_000;
 const wakers = new Map<string, () => void>();
-const TRIM_MS = 60_000;
 
 function run(feed: Pollable, stored: Partial<FeedHealth>): void {
     const { name, intervalMS } = feed.source;
@@ -85,14 +86,6 @@ function run(feed: Pollable, stored: Partial<FeedHealth>): void {
     void loop();
 }
 
-// the gateway's MAXLEN caps the count, this drops what's older than the replay period
-async function trim(): Promise<void> {
-    if (Config.replayPeriod === 0) return;
-    const minID = `${Date.now() - (Config.replayPeriod * 60 * 60 * 1000)}-0`;
-    const removed = await Redis.send("XTRIM", [streamKey, "MINID", "~", minID]) as number;
-    if (removed !== 0) Debug("ingester:trim", `removed ${removed} expired event(s)`);
-}
-
 await Redis.set(`${Config.redisPrefix}ingester:started_at`, new Date().toISOString());
 await Redis.set(`${Config.redisPrefix}ingester:version`, Config.version);
 await startIdleWatch();
@@ -105,7 +98,6 @@ const running = feeds.filter(feed => !IngesterConfig.disabledSources.includes(fe
 const health = await loadFeedHealth(running.map(feed => feed.source.name));
 for (const feed of running) run(feed, health[feed.source.name] ?? {});
 
-setInterval(() => void trim().catch((err: unknown) => { Debug("ingester:trim", `failed: ${String(err)}`); }), TRIM_MS);
 startRecoveryWatch();
 await startLatencyWatch();
 if (IngesterConfig.backfillEnabled) startBackfill();

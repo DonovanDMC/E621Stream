@@ -36,12 +36,18 @@ export async function getDatabaseStats(): Promise<DatabaseStats> {
     const [[database], tables, indexes, snapshots, info, keys, stream] = await Promise.all([
         DB<Array<{ size: string }>>`SELECT pg_database_size(current_database()) AS size`,
         DB<Array<{ indexes: string; name: string; rows: string; table: string; total: string }>>`
-            SELECT relname AS name, n_live_tup AS rows, pg_total_relation_size(relid) AS total, pg_relation_size(relid) AS table, pg_indexes_size(relid) AS indexes
-            FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC
+            SELECT name, SUM(rows) AS rows, SUM(total) AS total, SUM("table") AS table, SUM(indexes) AS indexes FROM (
+                -- the events table's hours are added up as one
+                SELECT regexp_replace(relname, '^events_\\d{10}$', 'events') AS name, n_live_tup AS rows, pg_total_relation_size(relid) AS total, pg_relation_size(relid) AS "table", pg_indexes_size(relid) AS indexes
+                FROM pg_stat_user_tables
+            ) AS stats GROUP BY name ORDER BY SUM(total) DESC
         `,
         DB<Array<{ name: string; scans: string; size: string; table: string }>>`
-            SELECT indexrelname AS name, relname AS table, pg_relation_size(indexrelid) AS size, idx_scan AS scans
-            FROM pg_stat_user_indexes ORDER BY pg_relation_size(indexrelid) DESC
+            SELECT name, "table", SUM(size) AS size, SUM(scans) AS scans FROM (
+                SELECT regexp_replace(indexrelname, '^events_\\d{10}_pkey$', 'events_pkey') AS name, regexp_replace(relname, '^events_\\d{10}$', 'events') AS "table",
+                    pg_relation_size(indexrelid) AS size, idx_scan AS scans
+                FROM pg_stat_user_indexes
+            ) AS stats GROUP BY name, "table" ORDER BY SUM(size) DESC
         `,
         getDataCounts(),
         Redis.send("INFO", ["memory"]) as Promise<string>,

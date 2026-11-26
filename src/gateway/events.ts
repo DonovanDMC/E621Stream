@@ -316,7 +316,7 @@ export type StreamItem = StreamEvent | StreamNotice;
 export type NoticeData<T extends NoticeType> = Omit<Extract<StreamNotice, { type: T }>, "id" | "notice" | "time" | "type">;
 export async function publishNotice<T extends NoticeType>(type: T, data: NoticeData<T>): Promise<string> {
     const fields = objectToFields({ notice: true, type, time: new Date().toISOString(), ...data });
-    return await Redis.send("XADD", [streamKey, "MAXLEN", "~", String(Config.replayLimit), "*", ...fields]) as string;
+    return await Redis.send("XADD", [streamKey, "MAXLEN", "~", String(Config.streamMaxLength), "*", ...fields]) as string;
 }
 
 export async function publish<T extends EventType>(type: T, time: string, data: EventTypeDataMap[T], context?: EventContext): Promise<string> {
@@ -326,7 +326,7 @@ export async function publish<T extends EventType>(type: T, time: string, data: 
     if (recovered) count("events.recovered");
     // only stored when there's something in it
     const fields = objectToFields({ type, time, recovered, data, ...context && Object.keys(context).length !== 0 ? { context } : {} });
-    return await Redis.send("XADD", [streamKey, "MAXLEN", "~", String(Config.replayLimit), "*", ...fields]) as string;
+    return await Redis.send("XADD", [streamKey, "MAXLEN", "~", String(Config.streamMaxLength), "*", ...fields]) as string;
 }
 
 const LATEST_LOOKBACK = 20;

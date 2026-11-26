@@ -59,9 +59,12 @@ const env = parseEnv("shared", z.object({
 
     LOG_DIR: z.string().default("logs"),
     LOG_EVENTS: bool.default(true),
-    // the ingester trims the stream, the gateway replays from it
-    REPLAY_PERIOD: z.coerce.number().int().nonnegative().default(0), // hours
-    REPLAY_LIMIT: z.coerce.number().int().positive().default(2_000_000),
+    // replays come from postgres, 0 keeps everything
+    REPLAY_PERIOD: z.coerce.number().int().nonnegative().default(72), // hours
+    // the redis stream is only for live delivery, it keeps this long of what's been copied to postgres
+    STREAM_LIVE_PERIOD: z.coerce.number().int().positive().default(10), // minutes
+    // so redis can't fill up if postgres is down for a long time
+    STREAM_MAX_LENGTH: z.coerce.number().int().positive().default(100_000),
 }));
 
 const version = await resolveVersion();
@@ -95,7 +98,8 @@ const Config = {
     logDir: env.LOG_DIR,
     logEvents: env.LOG_EVENTS,
     replayPeriod: env.REPLAY_PERIOD,
-    replayLimit: env.REPLAY_LIMIT,
+    streamLivePeriod: env.STREAM_LIVE_PERIOD,
+    streamMaxLength: env.STREAM_MAX_LENGTH,
 } as const;
 
 if (Config.e621DirectFallbackOnly && Config.e621EgressProxies.length === 0) {
