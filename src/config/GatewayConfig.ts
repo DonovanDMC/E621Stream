@@ -14,7 +14,7 @@ const env = parseEnv("gateway", z.object({
     GATEWAY_MAX_MESSAGES_PER_MINUTE: z.coerce.number().int().positive().default(60), // the default, admins can change it per user
     GATEWAY_AUTH_CACHE_SECONDS: z.coerce.number().int().positive().default(30 * 60),
     GATEWAY_SESSION_RECHECK_INTERVAL: z.coerce.number().int().positive().default(60_000), // ms
-    GATEWAY_SNAPSHOT_CHUNK_SIZE: z.coerce.number().int().positive().default(1000),
+    GATEWAY_SNAPSHOT_CHUNK_SIZE: z.coerce.number().int().positive().default(100),
     GATEWAY_MAX_SNAPSHOT_IDS: z.coerce.number().int().positive().default(1000), // per request
     GATEWAY_MAX_BUFFERED_BYTES: z.coerce.number().int().positive().default(16 * 1024 * 1024), // 16MB
     GATEWAY_REPLAY_BATCH_SIZE: z.coerce.number().int().positive().default(500),
