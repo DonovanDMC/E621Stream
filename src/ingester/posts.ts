@@ -35,16 +35,31 @@ async function search(tags: string, limit: number, page: number): Promise<Array<
 
 // a post's updated_at and its newest version are from the same save
 const VERSION_SLACK_MS = 2000;
-const VERSION_LOOKUP_LIMIT = 5;
+const VERSION_LOOKUP_POSTS = 50;
+const VERSION_LOOKUP_LIMIT = 320;
+// versions this far behind the versions feed are looked at too, it can be a poll behind
+const VERSION_LOOKUP_MARGIN = 5000;
 
 // edits make a post version, which says who made them. changes that aren't edits, like approvals, don't have one.
-// the posts feed often gets to a post before the versions feed does, so its newest versions are fetched then
-async function updaterOf(post: E621.ExtendedPost): Promise<EventContext | undefined> {
-    let version = await PostVersionIndex.madeAt(post.id, post.updated_at, VERSION_SLACK_MS);
-    if (!version) {
-        await PostVersionIndex.remember(await request("post_versions for a post", () => e621.postVersions.search({ post_id: post.id, limit: VERSION_LOOKUP_LIMIT })));
-        version = await PostVersionIndex.madeAt(post.id, post.updated_at, VERSION_SLACK_MS);
+// the posts feed often gets to a post before the versions feed does, so versions newer than the feed's are fetched then,
+// many posts to a search. anything older the feed already has, a vote or favorite also moves updated_at, and looking those
+// up one post at a time used most of the rate limit
+async function rememberVersions(posts: Array<E621.ExtendedPost>): Promise<void> {
+    const missing: Array<number> = [];
+    for (const post of posts) {
+        if (!await PostVersionIndex.madeAt(post.id, post.updated_at, VERSION_SLACK_MS)) missing.push(post.id);
     }
+    const feed = Number(await Redis.hget(cursorKey, "post_versions"));
+    if (missing.length === 0 || !feed) return;
+    for (let i = 0; i < missing.length; i += VERSION_LOOKUP_POSTS) {
+        const ids = missing.slice(i, i + VERSION_LOOKUP_POSTS);
+        // post_id takes a comma separated list, though it's typed as one id
+        await PostVersionIndex.remember(await request("post_versions for posts", () => e621.postVersions.search({ post_id: ids.join(",") as unknown as number, id: `>${feed - VERSION_LOOKUP_MARGIN}`, limit: VERSION_LOOKUP_LIMIT })));
+    }
+}
+
+async function updaterOf(post: E621.ExtendedPost): Promise<EventContext | undefined> {
+    const version = await PostVersionIndex.madeAt(post.id, post.updated_at, VERSION_SLACK_MS);
     return version ? { updater_id: version.updater_id } : undefined;
 }
 
@@ -92,6 +107,10 @@ export class PostsFeed {
         if (found.length === 0) return 0;
         const posts = found.toSorted((a, b) => Date.parse(a.updated_at) - Date.parse(b.updated_at));
         const stored = await getSnapshots("post", posts.map(post => post.id));
+        await rememberVersions(posts.filter((post) => {
+            const before = stored.get(post.id);
+            return before !== undefined && before.version !== post.change_seq && !isNewPost(post, true);
+        }));
         const writes: Array<E621.ExtendedPost> = [];
         let published = 0;
         for (const post of posts) {
