@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import Debug from "@yiffy/debug";
 import E621, { OAuthClient, RatelimitError, UnexpectedResponseError } from "e621";
 
@@ -49,10 +51,16 @@ export const privateQueue = new RequestQueue(GatewayConfig.privateRequestInterva
 export const backfillQueue = ingestQueue.background;
 export const SENSITIVE_KEYS = ["ip_addr", "creator_ip_addr", "updater_ip_addr", "banner_ip_addr", "last_ip_addr", "email"];
 
+// the queue whose slot the running request holds
+const holding = new AsyncLocalStorage<Scheduler>();
+const sameQueue = (a: Scheduler | undefined, b: Scheduler): boolean => a !== undefined && (a === b || (a === ingestQueue && b === backfillQueue) || (a === backfillQueue && b === ingestQueue));
+
 export async function request<T>(description: string, fn: () => Promise<T>, queue: Scheduler = isRecovering() ? backfillQueue : ingestQueue, retries = 5): Promise<T> {
+    // it'd wait for a slot the caller holds, enough of those at once and nothing in the queue moves again
+    if (sameQueue(holding.getStore(), queue)) throw new Error(`${description}: requested from inside another request on the same queue`);
     for (let attempt = 1; ; attempt++) {
         try {
-            return scrub(await queue.schedule(fn), SENSITIVE_KEYS);
+            return scrub(await queue.schedule(async () => holding.run(queue, fn)), SENSITIVE_KEYS);
         } catch (err) {
             const status = statusOf(err);
             if (status === 401 || status === 403) throw new AuthError(description, status);

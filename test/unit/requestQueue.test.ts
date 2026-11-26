@@ -31,3 +31,12 @@ test("without a share, background waits for foreground to run out", async () => 
 test("background runs whenever foreground is empty", async () => {
     expect(await order(4, 0, 3)).toEqual(["b0", "b1", "b2"]);
 });
+
+test("a request inside another on the same queue throws instead of deadlocking", async () => {
+    const { authQueue, request } = await import("../../src/util/e621.ts");
+    const nested = request("outer", async () => request("inner", async () => 1, authQueue), authQueue, 1);
+    expect(nested).rejects.toThrow("requested from inside another request on the same queue");
+    // other queues are fine
+    const { privateQueue } = await import("../../src/util/e621.ts");
+    expect(await request("outer", async () => request("inner", async () => 2, privateQueue), authQueue)).toBe(2);
+});

@@ -25,6 +25,8 @@ export interface Crawl {
     /** The feed's cursor, everything after it is the feed's to store */
     cursor: string;
     name: string;
+    /** Its search makes its own requests through the backfill queue, rather than being run inside one */
+    ownRequests?: boolean;
     /** The snapshots it fills, ones stored somewhere else don't have one */
     resource?: SnapshotResourceType;
     private?(item: Item): boolean;
@@ -35,6 +37,7 @@ export interface Crawl {
 interface SnapshotCrawl<R extends SnapshotResourceType> {
     cursor: string;
     name: string;
+    ownRequests?: boolean;
     resource: R;
     private?(item: SnapshotTypeMap[R]): boolean;
     search(page: { limit: number; page: `b${number}` }): Promise<Array<SnapshotTypeMap[R]>>;
@@ -47,7 +50,7 @@ const crawl = <R extends SnapshotResourceType>(source: SnapshotCrawl<R>): Crawl 
 export const CRAWLS: Array<Crawl> = [
     // first, posts are fetched basic once every tag is here to put theirs in categories
     crawl({ name: "tags", resource: "tag", cursor: "tags", search: page => e621.tags.search(page) }),
-    crawl({ name: "posts", resource: "post", cursor: "posts:max_id", search: async page => searchPosts({ ...page, tags: "status:any" }) }),
+    crawl({ name: "posts", resource: "post", cursor: "posts:max_id", ownRequests: true, search: async page => searchPosts("backfill posts", { ...page, tags: "status:any" }, backfillQueue) }),
     crawl({ name: "comments", resource: "comment", cursor: "comments", search: page => e621.comments.search({ ...page, group_by: "comment" }) }),
     crawl({ name: "forum_posts", resource: "forum_post", cursor: "forum_posts", search: page => e621.forumPosts.search(page) }),
     crawl({ name: "forum_topics", resource: "forum_topic", cursor: "forum_topics", search: page => e621.forumTopics.search(page) }),
@@ -109,7 +112,8 @@ async function run(source: Crawl): Promise<boolean> {
 
     await Promise.all(lanes.map(async (lane) => {
         while (lane.cursor > lane.lower) {
-            const items = await request(`backfill ${source.name}`, () => source.search({ limit: LIMIT, page: `b${lane.cursor}` }), backfillQueue);
+            const page = { limit: LIMIT, page: `b${lane.cursor}` as const };
+            const items = source.ownRequests ? await source.search(page) : await request(`backfill ${source.name}`, () => source.search(page), backfillQueue);
             count("requests.backfill");
             const mine = items.filter(item => item.id >= lane.lower);
             const kept = mine.filter(item => !source.private?.(item));

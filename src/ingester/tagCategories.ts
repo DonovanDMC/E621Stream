@@ -5,6 +5,7 @@ import DB from "../db/DB.ts";
 import Backfill from "../db/models/Backfill.ts";
 import { e621, request } from "../util/e621.ts";
 
+import type { Scheduler } from "../util/RequestQueue.ts";
 import type * as E621 from "e621-openapi/types";
 
 // the spec names each id
@@ -79,8 +80,14 @@ export async function useBasicPosts(): Promise<boolean> {
     return basicAllowed;
 }
 
-/** Posts with their tags in categories, basic when it can be since that's lighter on e621 */
-export async function searchPosts(options: { limit: number; page: number | `b${number}`; tags: string }): Promise<Array<E621.ExtendedPost>> {
-    if (await useBasicPosts()) return categorize(await e621.posts.search({ ...options, mode: "basic" }));
-    return await e621.posts.search({ ...options, mode: "extended" });
+/**
+ * Posts with their tags in categories, basic when it can be since that's lighter on e621.
+ * Makes its own request, don't call it inside one: looking up tags while holding a request's slot deadlocked the queue
+ */
+export async function searchPosts(description: string, options: { limit: number; page: number | `b${number}`; tags: string }, queue?: Scheduler): Promise<Array<E621.ExtendedPost>> {
+    if (await useBasicPosts()) {
+        const posts = await request(description, async () => e621.posts.search({ ...options, mode: "basic" }), queue);
+        return categorize(posts);
+    }
+    return request(description, async () => e621.posts.search({ ...options, mode: "extended" }), queue);
 }

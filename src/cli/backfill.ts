@@ -48,7 +48,8 @@ async function verify(source: Crawl): Promise<void> {
     const { resource } = source;
     const ceiling = (await Backfill.find(source.name))?.ceiling ?? null;
     const before = ceiling === null ? MAX_ID : Math.floor(Math.random() * ceiling) + LIMIT;
-    const items = await request(`verify ${source.name}`, () => source.search({ limit: LIMIT, page: `b${before}` }), backfillQueue);
+    const page = { limit: LIMIT, page: `b${before}` as const };
+    const items = source.ownRequests ? await source.search(page) : await request(`verify ${source.name}`, () => source.search(page), backfillQueue);
     const stored = await getSnapshots(resource, items.map(item => item.id));
     const differ = new Map<string, { count: number; example: string }>();
     let missing = 0;

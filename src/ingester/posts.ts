@@ -30,7 +30,7 @@ const MAX_POST_ID = 2_147_483_647;
 // a/b id paging doesn't work with order: tags, so these are numbered pages.
 // status:any is needed, deleted posts are invisible to every search otherwise
 async function search(tags: string, limit: number, page: number): Promise<Array<E621.ExtendedPost>> {
-    return request("posts", () => searchPosts({ tags: `${tags} status:any`, limit, page }));
+    return searchPosts("posts", { tags: `${tags} status:any`, limit, page });
 }
 
 // a post's updated_at and its newest version are from the same save
