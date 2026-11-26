@@ -111,8 +111,10 @@ async function run(source: Crawl): Promise<boolean> {
     await setState(source.name, { status: "running", ceiling, lanes, cursor: remaining(lanes), error: null, detail: null, started_at: state?.started_at ?? new Date() });
     Debug("backfill", `${source.name}: crawling ${lanes.map(lane => `${lane.cursor - 1}..${lane.lower}`).join(", ")}`);
 
+    // an object, a plain let set inside the lanes is narrowed to false after them
+    const stop = { reset: false };
     await Promise.all(lanes.map(async (lane) => {
-        while (lane.cursor > lane.lower) {
+        while (lane.cursor > lane.lower && !stop.reset) {
             const page = { limit: LIMIT, page: `b${lane.cursor}` as const };
             const items = source.ownRequests ? await source.search(page) : await request(`backfill ${source.name}`, () => source.search(page), backfillQueue);
             count("requests.backfill");
@@ -122,9 +124,20 @@ async function run(source: Crawl): Promise<boolean> {
             stored += kept.length;
             // a page that went past the lower bound, or came back empty, is the end of the lane
             lane.cursor = mine.length === items.length && items.length !== 0 ? Math.min(...items.map(item => item.id)) : lane.lower;
-            await setState(source.name, { lanes, cursor: remaining(lanes), stored });
+            // reset while running deletes the row, writing to it again would leave a row with no ceiling that never finishes
+            const current = await Backfill.find(source.name);
+            if (current?.status !== "running") {
+                stop.reset = true;
+                return;
+            }
+            Object.assign(current, { lanes, cursor: remaining(lanes), stored });
+            await current.save();
         }
     }));
+    if (stop.reset) {
+        Debug("backfill", `${source.name}: reset or changed while crawling, stopped`);
+        return false;
+    }
     await setState(source.name, { status: "done", cursor: 0, finished_at: new Date() });
     Debug("backfill", `${source.name}: done, ${stored} stored`);
     return true;
