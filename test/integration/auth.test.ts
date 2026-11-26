@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import Config from "../../src/Config.ts";
+import GatewayConfig from "../../src/config/GatewayConfig.ts";
 import DB from "../../src/db/DB.ts";
 import GatewayToken from "../../src/db/models/GatewayToken.ts";
 import User from "../../src/db/models/User.ts";
@@ -49,8 +49,8 @@ test("parseAuthHeader", () => {
 describe("message limits", () => {
     test("the default, then what an admin set", async () => {
         await User.create({ id: 1, role: "user" });
-        expect(await User.messageLimit(1)).toBe(Config.maxClientMessagesPerMinute);
-        expect(await User.messageLimit(null)).toBe(Config.maxClientMessagesPerMinute);
+        expect(await User.messageLimit(1)).toBe(GatewayConfig.maxMessagesPerMinute);
+        expect(await User.messageLimit(null)).toBe(GatewayConfig.maxMessagesPerMinute);
         await User.setMessageLimit(1, MESSAGE_LIMIT_MAX);
         expect(await User.messageLimit(1)).toBe(MESSAGE_LIMIT_MAX);
         expect((await User.withMessageLimits()).map(user => user.id)).toEqual([1]);

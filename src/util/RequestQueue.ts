@@ -1,4 +1,4 @@
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 import Redis from "../db/Redis.ts";
 
 const MAX_IN_FLIGHT = 2;

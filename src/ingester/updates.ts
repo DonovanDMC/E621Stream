@@ -1,6 +1,6 @@
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 import Redis from "../db/Redis.ts";
 import { publish, type EventContext, type EventType, type EventTypeDataMap } from "../gateway/events.ts";
 import { getSnapshotIDs, getSnapshots, modActionUpdater, removeSnapshots, saveSnapshots, versionOf, type SnapshotResourceType } from "../gateway/snapshots.ts";

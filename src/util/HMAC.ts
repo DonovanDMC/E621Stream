@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 
 const ALGORITHM = "sha256";
 export function fingerprint(content: string): string {

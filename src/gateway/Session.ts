@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import GatewayConfig from "../config/GatewayConfig.ts";
 import Snapshot from "../db/models/Snapshot.ts";
 import User from "../db/models/User.ts";
 import Redis, { parseEntry, type StreamEntry } from "../db/Redis.ts";
@@ -85,7 +86,7 @@ export default class Session {
         this.compressor = ws.data.compression ? new StreamCompressor(ws.data.compression) : null;
         bumpConnections("ip", ws.data.ip, 1);
         sessions.push(this);
-        this.identifyTimer = setTimeout(() => { void this.close(CloseCodes.NotIdentified, I18n.t("gateway.identifyTimedOut")); }, Config.identifyTimeout);
+        this.identifyTimer = setTimeout(() => { void this.close(CloseCodes.NotIdentified, I18n.t("gateway.identifyTimedOut")); }, GatewayConfig.identifyTimeout);
     }
 
     private buffered(): number {
@@ -98,8 +99,8 @@ export default class Session {
             return null;
         }
 
-        if (input.length > Config.maxSubscriptions) {
-            await this.close(CloseCodes.InvalidSubscription, I18n.t("gateway.subscriptions.tooMany", { max: Config.maxSubscriptions }));
+        if (input.length > GatewayConfig.maxSubscriptions) {
+            await this.close(CloseCodes.InvalidSubscription, I18n.t("gateway.subscriptions.tooMany", { max: GatewayConfig.maxSubscriptions }));
             return null;
         }
 
@@ -215,7 +216,7 @@ export default class Session {
             return false;
         }
 
-        if (Config.wsAuthRequired && !credentials) {
+        if (GatewayConfig.authRequired && !credentials) {
             this.debug("sent no auth");
             await this.close(CloseCodes.AuthenticationFailed, I18n.t("gateway.auth.required"));
             return false;
@@ -245,9 +246,9 @@ export default class Session {
             }
 
             if (this.is("closed")) return false;
-            if (Config.maxConnectionsPerUser > 0 && (connectionsByUser.get(result.user.id) ?? 0) >= Config.maxConnectionsPerUser) {
-                this.debug(`${describeUser(result.user)} tried to connect more than ${Config.maxConnectionsPerUser} sessions at a time`);
-                await this.close(CloseCodes.TooManyConnections, I18n.t("gateway.tooManyConnections", { max: Config.maxConnectionsPerUser }));
+            if (GatewayConfig.maxConnectionsPerUser > 0 && (connectionsByUser.get(result.user.id) ?? 0) >= GatewayConfig.maxConnectionsPerUser) {
+                this.debug(`${describeUser(result.user)} tried to connect more than ${GatewayConfig.maxConnectionsPerUser} sessions at a time`);
+                await this.close(CloseCodes.TooManyConnections, I18n.t("gateway.tooManyConnections", { max: GatewayConfig.maxConnectionsPerUser }));
                 return false;
             }
 
@@ -338,11 +339,11 @@ export default class Session {
             throw err;
         }
 
-        for (let i = 0; i < request.ids.length; i += Config.snapshotChunkSize) {
-            const ids = request.ids.slice(i, i + Config.snapshotChunkSize);
+        for (let i = 0; i < request.ids.length; i += GatewayConfig.snapshotChunkSize) {
+            const ids = request.ids.slice(i, i + GatewayConfig.snapshotChunkSize);
             const result = await Snapshot.forRequest(request.resource, ids);
             if (this.is("closed")) return;
-            const done = i + Config.snapshotChunkSize >= request.ids.length;
+            const done = i + GatewayConfig.snapshotChunkSize >= request.ids.length;
             await this.send({
                 op: OPCodes.Snapshot,
                 d: {
@@ -352,7 +353,7 @@ export default class Session {
                     done,
                 },
             });
-            while (!done && !this.is("closed") && this.buffered() > (Config.maxBufferedBytes / 2)) await Bun.sleep(50);
+            while (!done && !this.is("closed") && this.buffered() > (GatewayConfig.maxBufferedBytes / 2)) await Bun.sleep(50);
         }
     }
 
@@ -360,7 +361,7 @@ export default class Session {
         let from = cursor;
         let sent = 0;
         for (;;) {
-            const entries = await Redis.send("XRANGE", [streamKey, `(${from}`, "+", "COUNT", String(Config.replayBatchSize)]) as Array<StreamEntry>;
+            const entries = await Redis.send("XRANGE", [streamKey, `(${from}`, "+", "COUNT", String(GatewayConfig.replayBatchSize)]) as Array<StreamEntry>;
             if (this.isNot("replaying")) return;
             for (const entry of entries) {
                 const event = parseEntry(entry);
@@ -373,8 +374,8 @@ export default class Session {
                     }
                 }
             }
-            if (entries.length < Config.replayBatchSize) break;
-            while (this.is("replaying") && this.buffered() > (Config.maxBufferedBytes / 2)) await Bun.sleep(50);
+            if (entries.length < GatewayConfig.replayBatchSize) break;
+            while (this.is("replaying") && this.buffered() > (GatewayConfig.maxBufferedBytes / 2)) await Bun.sleep(50);
             if (this.isNot("replaying")) return;
         }
 
@@ -430,7 +431,7 @@ export default class Session {
             return false;
         }
 
-        if (!force && this.buffered() > Config.maxBufferedBytes) {
+        if (!force && this.buffered() > GatewayConfig.maxBufferedBytes) {
             await this.close(CloseCodes.SlowConsumer, I18n.t("gateway.slow.consumer"));
             return false;
         }
@@ -555,8 +556,8 @@ export default class Session {
             d: {
                 version: PROTOCOL_VERSION,
                 session_id: this.id,
-                identify_timeout_ms: Config.identifyTimeout,
-                auth_required: Config.wsAuthRequired,
+                identify_timeout_ms: GatewayConfig.identifyTimeout,
+                auth_required: GatewayConfig.authRequired,
                 compression: this.ws.data.compression,
                 events: EVENT_TYPES,
                 private_events: PRIVATE_EVENT_TYPES,

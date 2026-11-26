@@ -1,6 +1,7 @@
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import IngesterConfig from "../config/IngesterConfig.ts";
 import Redis from "../db/Redis.ts";
 import { getSlowMode } from "../gateway/slowMode.ts";
 
@@ -61,7 +62,7 @@ export function evaluate(state: State, recent: Array<Sample>): State & { change:
         requests: recent.length,
         since: state.latency?.since ?? at,
     };
-    const slow = latency.p50 >= Config.latencyAlertMS;
+    const slow = latency.p50 >= IngesterConfig.latencyAlertMS;
     const calm = slow ? 0 : state.calm + 1;
     if (!latency.elevated && slow) return { calm, latency: { ...latency, elevated: true, since: at }, change: "elevated" };
     if (latency.elevated && calm >= RECOVER_CHECKS) return { calm, latency: { ...latency, elevated: false, since: at }, change: "recovered", elevatedAt: latency.since };

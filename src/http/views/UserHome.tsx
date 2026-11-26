@@ -1,4 +1,4 @@
-import Config from "../../Config.ts";
+import HTTPConfig from "../../config/HTTPConfig.ts";
 import { MAX_TOKEN_NAME_LENGTH } from "../../util/Constants.ts";
 
 import Main from "./layouts/Main.tsx";
@@ -11,7 +11,7 @@ import type OAuthLink from "../../db/models/OAuthLink.ts";
 export default function UserHome({ link, tokens }: { link: OAuthLink | null; tokens: Array<GatewayToken> }): JSX.Element {
     return (
         <Main title="User Home">
-            <h2 class="h4 mt-4">Tokens ({tokens.length}/{Config.maxTokensPerUser})</h2>
+            <h2 class="h4 mt-4">Tokens ({tokens.length}/{HTTPConfig.maxTokensPerUser})</h2>
             <p class="text-body-secondary">
                 Send in <code>identify</code> as <code>{"auth: { token }"}</code>, or as an <code>Authorization: Bearer</code> header when connecting.<br />
                 Deleting a token will disconnect any sessions using it within 1 minute.
@@ -19,7 +19,7 @@ export default function UserHome({ link, tokens }: { link: OAuthLink | null; tok
             {!link?.full ? <MissingFullAccess /> : <RemoveFullAccess />}
             <hr />
             {tokens.length === 0 ? <p>No Tokens Yet</p> : <TokenList tokens={tokens} link={link} />}
-            {tokens.length < Config.maxTokensPerUser && <CreateTokenForm />}
+            {tokens.length < HTTPConfig.maxTokensPerUser && <CreateTokenForm />}
         </Main>
     );
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import Config from "../../src/Config.ts";
+import GatewayConfig from "../../src/config/GatewayConfig.ts";
 import { compareIDs, DecodeError, parseCursor, parseSnapshotRequest } from "../../src/gateway/protocol.ts";
 
 describe("parseCursor", () => {
@@ -37,7 +37,7 @@ describe("parseSnapshotRequest", () => {
             { resource: "post", ids: ["1"] },
             { resource: "post", ids: [1], nonce: 5 },
             { resource: "post", ids: [1], nonce: "x".repeat(1000) },
-            { resource: "post", ids: Array.from({ length: Config.maxSnapshotIDs + 1 }, (_, i) => i + 1) },
+            { resource: "post", ids: Array.from({ length: GatewayConfig.maxSnapshotIDs + 1 }, (_, i) => i + 1) },
         ];
         for (const value of bad) expect(() => parseSnapshotRequest(value)).toThrow(DecodeError);
     });

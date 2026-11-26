@@ -1,6 +1,7 @@
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import IngesterConfig from "../config/IngesterConfig.ts";
 import Backfill, { type BackfillAttributes, type Lane } from "../db/models/Backfill.ts";
 import PostVersionIndex from "../db/models/PostVersionIndex.ts";
 import Redis from "../db/Redis.ts";
@@ -138,7 +139,7 @@ export async function runBackfill(source: Crawl): Promise<boolean> {
 
 // one at a time, the backfill queue only gets what the feeds leave over anyway
 export function startBackfill(): void {
-    const sources = CRAWLS.filter(source => !Config.disabledSources.includes(source.name));
+    const sources = CRAWLS.filter(source => !IngesterConfig.disabledSources.includes(source.name));
     void (async (): Promise<never> => {
         for (const source of sources) await setState(source.name, {}).catch(() => null);
         for (;;) {

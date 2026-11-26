@@ -1,6 +1,6 @@
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import IngesterConfig from "../config/IngesterConfig.ts";
 import Redis, { parseEntry, type StreamEntry } from "../db/Redis.ts";
 import { publishNotice, streamKey } from "../gateway/events.ts";
 import { getRecovery, recoveryContext, saveRecovery, type Recovery } from "../gateway/recovery.ts";
@@ -29,7 +29,7 @@ const RUNS: Record<string, Run> = {
     ...Object.fromEntries(UPDATES.filter(source => source.mode === "ordered").map((source): [string, Run] => [source.name, async (from, to, stop): Promise<number> => new UpdateFeed(source).recover(from, to, stop)])),
 };
 
-export const RECOVERABLE = Object.keys(RUNS).filter(name => !Config.disabledSources.includes(name));
+export const RECOVERABLE = Object.keys(RUNS).filter(name => !IngesterConfig.disabledSources.includes(name));
 
 // creates already in the stream aren't sent again
 async function alreadySent(from: number, sources: Array<string>): Promise<Map<string, Array<number>>> {

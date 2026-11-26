@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 
-import Config from "../../src/Config.ts";
+import IngesterConfig from "../../src/config/IngesterConfig.ts";
 import { evaluate } from "../../src/util/latency.ts";
 
 const samples = (ms: number, count = 20): Array<{ at: number; failed: boolean; ms: number }> => Array.from({ length: count }, () => ({ at: Date.now(), failed: false, ms }));
-const slow = Config.latencyAlertMS, fast = Math.floor(Config.latencyAlertMS / 4);
+const slow = IngesterConfig.latencyAlertMS, fast = Math.floor(IngesterConfig.latencyAlertMS / 4);
 
 test("needs enough requests to say anything", () => {
     expect(evaluate({ calm: 0, latency: null }, samples(slow, 3)).change).toBeNull();

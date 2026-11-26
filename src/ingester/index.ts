@@ -1,6 +1,7 @@
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import IngesterConfig from "../config/IngesterConfig.ts";
 import Redis from "../db/Redis.ts";
 import { streamKey } from "../gateway/events.ts";
 import { AuthError } from "../util/errors.ts";
@@ -36,7 +37,7 @@ const TRIM_MS = 60_000;
 
 function run(feed: Pollable, stored: Partial<FeedHealth>): void {
     const { name, intervalMS } = feed.source;
-    const interval = intervalMS * Config.pollIntervalScale;
+    const interval = intervalMS * IngesterConfig.pollIntervalScale;
     const health: FeedHealth = { last_ok_at: null, last_failed_at: null, error: null, outage: null, published: 0, ...stored, interval_ms: interval, paused: false };
     let timer: NodeJS.Timeout | null = null;
     // how long until the next poll
@@ -99,14 +100,14 @@ await startControlWatch(name => wakers.get(name)?.());
 await markTrackingStart();
 
 const feeds: Array<Pollable> = [new PostsFeed(), ...FEEDS.map(source => new Feed(source)), ...UPDATES.map(source => new UpdateFeed(source))];
-for (const feed of feeds) if (Config.disabledSources.includes(feed.source.name)) Debug("ingester", `${feed.source.name} is disabled`);
-const running = feeds.filter(feed => !Config.disabledSources.includes(feed.source.name));
+for (const feed of feeds) if (IngesterConfig.disabledSources.includes(feed.source.name)) Debug("ingester", `${feed.source.name} is disabled`);
+const running = feeds.filter(feed => !IngesterConfig.disabledSources.includes(feed.source.name));
 const health = await loadFeedHealth(running.map(feed => feed.source.name));
 for (const feed of running) run(feed, health[feed.source.name] ?? {});
 
 setInterval(() => void trim().catch((err: unknown) => { Debug("ingester:trim", `failed: ${String(err)}`); }), TRIM_MS);
 startRecoveryWatch();
 await startLatencyWatch();
-if (Config.backfillEnabled) startBackfill();
+if (IngesterConfig.backfillEnabled) startBackfill();
 startDataCounts();
 Debug("ingester", `polling ${running.length} feed(s)`);

@@ -1,4 +1,4 @@
-import Config from "../Config.ts";
+import GatewayConfig from "../config/GatewayConfig.ts";
 import { STORED_RESOURCES } from "../ingester/sources.ts";
 import { GATEWAY_NONCE_LIMIT } from "../util/Constants.ts";
 import I18n from "../util/I18n.ts";
@@ -79,7 +79,7 @@ export function parseSnapshotRequest(value: unknown): SnapshotRequest {
     if (!value || typeof value !== "object") throw new DecodeError(I18n.t("gateway.invalidPayload"));
     if (!("resource" in value) || typeof value.resource !== "string" || !STORED_RESOURCES.includes(value.resource as SnapshotResourceType)) throw new DecodeError(I18n.t("gateway.snapshot.unknownResource", { resources: STORED_RESOURCES.join(", ") }));
     if (!("ids" in value) || !Array.isArray(value.ids) || value.ids.length === 0) throw new DecodeError(I18n.t("gateway.snapshot.noIDs"));
-    if (value.ids.length > Config.maxSnapshotIDs) throw new DecodeError(I18n.t("gateway.snapshot.tooManyIDs", { max: Config.maxSnapshotIDs }));
+    if (value.ids.length > GatewayConfig.maxSnapshotIDs) throw new DecodeError(I18n.t("gateway.snapshot.tooManyIDs", { max: GatewayConfig.maxSnapshotIDs }));
     if (!value.ids.every(id => Number.isSafeInteger(id) && id > 0)) throw new DecodeError(I18n.t("gateway.snapshot.invalidIDs"));
     if ("nonce" in value && (typeof value.nonce !== "string" || value.nonce.length > GATEWAY_NONCE_LIMIT)) throw new DecodeError(I18n.t("gateway.snapshot.invalidNonce"));
     return { resource: value.resource as SnapshotResourceType, ids: value.ids as Array<number>, nonce: "nonce" in value ? value.nonce as string : null };

@@ -1,6 +1,7 @@
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import GatewayConfig from "../config/GatewayConfig.ts";
 import GatewayToken from "../db/models/GatewayToken.ts";
 import OAuthLink from "../db/models/OAuthLink.ts";
 import Redis from "../db/Redis.ts";
@@ -64,7 +65,7 @@ export async function verify(credentials: Credentials): Promise<VerifyResult> {
         result = { ok: false, reason: I18n.t("gateway.auth.credentials") };
     }
     Debug("gateway:auth", `checked ${credentials.username} with e621, got: ${result.ok ? `https://e621.net/users/${result.user.id}` : result.reason}`);
-    await Redis.set(key, JSON.stringify(result), "EX", result.ok ? Config.authCacheSeconds : NEGATIVE_CACHE_SECONDS);
+    await Redis.set(key, JSON.stringify(result), "EX", result.ok ? GatewayConfig.authCacheSeconds : NEGATIVE_CACHE_SECONDS);
     return result;
 }
 

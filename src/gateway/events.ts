@@ -1,4 +1,4 @@
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 import Redis, { objectToFields, parseEntry, type StreamEntry } from "../db/Redis.ts";
 import { count } from "../util/metrics.ts";
 import { Tuple } from "../util/util.ts";

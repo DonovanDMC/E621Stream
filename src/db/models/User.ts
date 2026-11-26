@@ -1,4 +1,6 @@
-import Config from "../../Config.ts";
+import Config from "../../config/Config.ts";
+import GatewayConfig from "../../config/GatewayConfig.ts";
+import HTTPConfig from "../../config/HTTPConfig.ts";
 import { encrypt } from "../../util/Encryption.ts";
 import { fingerprint } from "../../util/HMAC.ts";
 import DB from "../DB.ts";
@@ -60,7 +62,7 @@ export default class User extends Model<UserAttributes> {
             user_id: user.id,
             api_key_login_id: login.id,
             ip_address: ip,
-            expires_at: new Date(Date.now() + (Config.sessionLength * 60 * 60 * 1000)),
+            expires_at: new Date(Date.now() + (HTTPConfig.sessionLength * 60 * 60 * 1000)),
         });
 
         return { login, session, user };
@@ -68,11 +70,11 @@ export default class User extends Model<UserAttributes> {
 
     /** How many messages they can send the gateway a minute, people without an account get the default */
     static async messageLimit(id: number | null): Promise<number> {
-        if (id === null) return Config.maxClientMessagesPerMinute;
+        if (id === null) return GatewayConfig.maxMessagesPerMinute;
         const key = User.messageLimitKey(id);
         const cached = await Redis.get(key);
         if (cached !== null) return Number(cached);
-        const limit = (await User.find(id))?.messages_per_minute ?? Config.maxClientMessagesPerMinute;
+        const limit = (await User.find(id))?.messages_per_minute ?? GatewayConfig.maxMessagesPerMinute;
         await Redis.set(key, String(limit), "EX", MESSAGE_LIMIT_CACHE_SECONDS);
         return limit;
     }
@@ -93,7 +95,7 @@ export default class User extends Model<UserAttributes> {
             user_id: user.id,
             oauth_login_id: login.id,
             ip_address: ip,
-            expires_at: new Date(Date.now() + (Config.sessionLength * 60 * 60 * 1000)),
+            expires_at: new Date(Date.now() + (HTTPConfig.sessionLength * 60 * 60 * 1000)),
         });
 
         return { login, session, user };
@@ -108,7 +110,7 @@ export default class User extends Model<UserAttributes> {
 
     /** Everyone whose limit isn't the default */
     static async withMessageLimits(): Promise<Array<User>> {
-        const rows = await DB<Array<{ id: string }>>`SELECT id FROM ${DB(User.table)} WHERE messages_per_minute <> ${Config.maxClientMessagesPerMinute}`;
+        const rows = await DB<Array<{ id: string }>>`SELECT id FROM ${DB(User.table)} WHERE messages_per_minute <> ${GatewayConfig.maxMessagesPerMinute}`;
         return User.whereIn("id", rows.map(row => Number(row.id)), {}, { order: { id: "ASC" } });
     }
 

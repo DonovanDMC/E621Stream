@@ -2,7 +2,7 @@ import Router, { Middleware } from "@yiffy/bun-router";
 import Debug from "@yiffy/debug";
 import z from "zod";
 
-import Config from "../../Config.ts";
+import GatewayConfig from "../../config/GatewayConfig.ts";
 import OAuthLink from "../../db/models/OAuthLink.ts";
 import User from "../../db/models/User.ts";
 import { ban, drop, listBans, unban } from "../../gateway/management.ts";
@@ -84,7 +84,7 @@ Router.new("/admin/message-limit", "POST")
     .handle(async (req) => {
         const { limit: given = null, user_id: userID } = req.parsedBody;
         if (!Number.isSafeInteger(userID) || userID <= 0) return flashWithRedirect("/admin#message-limits", "error", I18n.t("web.admin.invalidUser"));
-        const limit = given === null ? Config.maxClientMessagesPerMinute : Number(given);
+        const limit = given === null ? GatewayConfig.maxMessagesPerMinute : Number(given);
         if (!Number.isInteger(limit) || limit < MESSAGE_LIMIT_MIN || limit > MESSAGE_LIMIT_MAX) {
             return flashWithRedirect("/admin#message-limits", "error", I18n.t("web.admin.messageLimit", { min: MESSAGE_LIMIT_MIN, max: MESSAGE_LIMIT_MAX }));
         }

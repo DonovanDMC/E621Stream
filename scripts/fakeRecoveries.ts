@@ -2,7 +2,7 @@
 // --running adds one that's still going. The ingester picks those up within 5 seconds, its sources aren't real
 // feeds so all it can do is fail them, stop the ingester first to keep it running.
 // usage: bun scripts/fakeRecoveries.ts <add [--running]|clear>
-import Config from "../src/Config.ts";
+import Config from "../src/config/Config.ts";
 import Redis from "../src/db/Redis.ts";
 import { getRecovery, saveRecovery, type Recovery, type SourceProgress } from "../src/gateway/recovery.ts";
 

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 import Redis from "../db/Redis.ts";
 import I18n from "../util/I18n.ts";
 

@@ -1,4 +1,5 @@
-import Config from "../../Config.ts";
+import GatewayConfig from "../../config/GatewayConfig.ts";
+import IngesterConfig from "../../config/IngesterConfig.ts";
 import { isActive, type Recovery, type RecoveryStatus } from "../../gateway/recovery.ts";
 import { RECOVERABLE } from "../../ingester/recovery.ts";
 import { FEED_SOURCES } from "../../ingester/sources.ts";
@@ -46,7 +47,7 @@ export default function Admin({ feedControls, feedHealth, limited, names, recove
             <StaffList names={names} owner={viewer.is("owner")} staff={staff} />
 
             <h2 class="h4 mt-4" id="message-limits">Message Limits</h2>
-            <p class="text-body-secondary">How many messages someone can send the gateway a minute, everyone else gets {Config.maxClientMessagesPerMinute}. Leave it empty to go back to that.</p>
+            <p class="text-body-secondary">How many messages someone can send the gateway a minute, everyone else gets {GatewayConfig.maxMessagesPerMinute}. Leave it empty to go back to that.</p>
             <MessageLimitForm />
             {limited.length === 0 ? <p>Everyone has the default.</p> : <MessageLimitList limited={limited} names={names} />}
 
@@ -199,7 +200,7 @@ function FeedList({ controls, health, recovering }: { controls: Record<string, F
 }
 
 function FeedRow({ control, health, intervalMS, name, recovering }: { control: FeedControl | null; health: Partial<FeedHealth>; intervalMS: number; name: string; recovering: boolean }): JSX.Element {
-    const disabled = Config.disabledSources.includes(name);
+    const disabled = IngesterConfig.disabledSources.includes(name);
     const scale = control?.slow?.scale ?? null;
     return (
         <tr>

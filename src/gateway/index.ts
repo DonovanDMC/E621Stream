@@ -1,6 +1,7 @@
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import GatewayConfig from "../config/GatewayConfig.ts";
 import { startLogging } from "../util/FileLog.ts";
 import I18n from "../util/I18n.ts";
 import { checkServices, clientIP } from "../util/util.ts";
@@ -19,14 +20,14 @@ await checkServices();
 
 const server = Bun.serve({
     hostname: Config.host,
-    port: Config.gatewayPort,
+    port: GatewayConfig.port,
     websocket: {
         data: {} as SocketData,
         perMessageDeflate: true,
         maxPayloadLength: 64 * 1024,
-        idleTimeout: Config.wsIdleTimeout,
+        idleTimeout: GatewayConfig.idleTimeout,
         sendPings: true,
-        backpressureLimit: Config.maxBufferedBytes * 2,
+        backpressureLimit: GatewayConfig.maxBufferedBytes * 2,
         async open(ws) {
             ws.data.session = new Session(ws);
             connectionsChanged();
@@ -60,8 +61,8 @@ const server = Bun.serve({
         if (url.pathname === "/health") return new Response("OK");
         if (url.pathname === "/ws") {
             const ip = clientIP(req, srv);
-            if (Config.maxConnectionsPerIP > 0 && (connectionsByIP.get(ip) ?? 0) >= Config.maxConnectionsPerIP) {
-                return Response.json({ error: I18n.t("gateway.tooManyConnections", { max: Config.maxConnectionsPerIP }) }, 429);
+            if (GatewayConfig.maxConnectionsPerIP > 0 && (connectionsByIP.get(ip) ?? 0) >= GatewayConfig.maxConnectionsPerIP) {
+                return Response.json({ error: I18n.t("gateway.tooManyConnections", { max: GatewayConfig.maxConnectionsPerIP }) }, 429);
             }
             const compression = url.searchParams.get("compress") as CompressionType;
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -84,5 +85,5 @@ await startPrivate();
 await startManagement(sessions);
 setInterval(() => {
     for (const session of [...sessions]) void session.recheckAuth().catch(() => null);
-}, Config.sessionRecheckInterval);
+}, GatewayConfig.sessionRecheckInterval);
 Debug("gateway", `listening on ${server.url.href}`);

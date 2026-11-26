@@ -1,7 +1,7 @@
 import Router, { Middleware } from "@yiffy/bun-router";
 import z from "zod";
 
-import Config from "../../Config.ts";
+import HTTPConfig from "../../config/HTTPConfig.ts";
 import GatewayToken from "../../db/models/GatewayToken.ts";
 import OAuthLink from "../../db/models/OAuthLink.ts";
 import { recheckToken } from "../../gateway/management.ts";
@@ -29,7 +29,7 @@ Router.new("/user/login/oauth", "GET")
     .handle(async (req, server) => {
         const params = new URL(req.url).searchParams;
         const purpose = params.get("purpose") as LoginPurpose | null;
-        if (!Config.e621OAuthEnabled) return flashWithRedirect("/user/login", "error", I18n.t("web.oauthUnavailable"));
+        if (!HTTPConfig.oauthEnabled) return flashWithRedirect("/user/login", "error", I18n.t("web.oauthUnavailable"));
         const start = await startAuthorization(req, clientIP(req, server), !purpose || !PURPOSES.includes(purpose) ? "login" : purpose, returnPath(params.get("return")));
         if (!start) return flashWithRedirect("/user/login", "warning", I18n.t("web.tooManyLogins"));
         return start;
@@ -57,7 +57,7 @@ Router.new("/user/tokens", "POST")
     }))
     .handle(async (req) => {
         const tokenCount = await GatewayToken.count({ user_id: req.user.id });
-        if (tokenCount >= Config.maxTokensPerUser) return flashWithRedirect("/user", "error", I18n.t("web.tooManyTokens"));
+        if (tokenCount >= HTTPConfig.maxTokensPerUser) return flashWithRedirect("/user", "error", I18n.t("web.tooManyTokens"));
         const { gatewayToken, token } = await GatewayToken.generate({
             user_id: req.user.id,
             name: req.parsedBody.name,

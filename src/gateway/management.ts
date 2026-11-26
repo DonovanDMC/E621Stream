@@ -1,6 +1,6 @@
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 import Redis, { createRedis } from "../db/Redis.ts";
 import I18n from "../util/I18n.ts";
 

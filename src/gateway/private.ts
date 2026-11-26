@@ -1,6 +1,7 @@
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import GatewayConfig from "../config/GatewayConfig.ts";
 import OAuthLink from "../db/models/OAuthLink.ts";
 import Redis, { createRedis } from "../db/Redis.ts";
 import { createClient, privateQueue, request, type E621Client } from "../util/e621.ts";
@@ -118,7 +119,7 @@ export function removePrivate(member: PrivateMember): void {
 
 // every gateway with the user's sessions would poll otherwise, the lock lets one do it
 async function own(source: string, userID: number): Promise<boolean> {
-    const key = lockKey(source, userID), ttl = Config.e621PrivatePollInterval * 3;
+    const key = lockKey(source, userID), ttl = GatewayConfig.privatePollInterval * 3;
     if (await Redis.send("SET", [key, gatewayID, "NX", "PX", String(ttl)]) === "OK") return true;
     if (await Redis.get(key) !== gatewayID) return false;
     await Redis.pexpire(key, ttl);
@@ -151,7 +152,7 @@ async function tick(): Promise<void> {
         const sources = [...new Set(forUser.flatMap(m => m.privateTypes.map(sourceOf)))];
         for (const name of sources) {
             const key = `${name}:${userID}`;
-            if (Date.now() - (lastPolled.get(key) ?? 0) < Config.e621PrivatePollInterval) continue;
+            if (Date.now() - (lastPolled.get(key) ?? 0) < GatewayConfig.privatePollInterval) continue;
             lastPolled.set(key, Date.now());
             try {
                 if (await own(name, userID)) await poll(name, userID, member.credentials);

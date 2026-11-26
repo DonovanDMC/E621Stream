@@ -1,4 +1,4 @@
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 
 import type { StreamItem } from "../gateway/events.ts";
 

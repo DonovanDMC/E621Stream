@@ -1,4 +1,5 @@
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import GatewayConfig from "../config/GatewayConfig.ts";
 import { EVENT_TYPES } from "../gateway/events.ts";
 import { filtersFor } from "../gateway/filter.ts";
 import { PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from "../gateway/protocol.ts";
@@ -55,23 +56,23 @@ function replay(): string {
 
 // filled in when the pages are loaded, so the limits always match the config
 const VALUES: Record<string, () => string> = {
-    auth_cache: () => String(Math.round(Config.authCacheSeconds / 60)),
-    auth_required: () => Config.wsAuthRequired ? "You have to authenticate to connect." : "Authenticating is optional, but it's needed for private events.",
+    auth_cache: () => String(Math.round(GatewayConfig.authCacheSeconds / 60)),
+    auth_required: () => GatewayConfig.authRequired ? "You have to authenticate to connect." : "Authenticating is optional, but it's needed for private events.",
     filters: filterTable,
-    identify_timeout: () => String(Config.identifyTimeout / 1000),
-    max_connections_ip: () => String(Config.maxConnectionsPerIP),
-    max_connections_user: () => String(Config.maxConnectionsPerUser),
+    identify_timeout: () => String(GatewayConfig.identifyTimeout / 1000),
+    max_connections_ip: () => String(GatewayConfig.maxConnectionsPerIP),
+    max_connections_user: () => String(GatewayConfig.maxConnectionsPerUser),
     max_filter_ids: () => MAX_FILTER_IDs.toLocaleString("en-US"),
     max_filter_tags: () => String(MAX_FILTER_TAGS),
-    max_snapshot_ids: () => Config.maxSnapshotIDs.toLocaleString("en-US"),
-    max_subscriptions: () => String(Config.maxSubscriptions),
-    messages_per_minute: () => String(Config.maxClientMessagesPerMinute),
+    max_snapshot_ids: () => GatewayConfig.maxSnapshotIDs.toLocaleString("en-US"),
+    max_subscriptions: () => String(GatewayConfig.maxSubscriptions),
+    messages_per_minute: () => String(GatewayConfig.maxMessagesPerMinute),
     nonce_limit: () => String(GATEWAY_NONCE_LIMIT),
-    private_poll: () => String(Math.round(Config.e621PrivatePollInterval / 1000)),
+    private_poll: () => String(Math.round(GatewayConfig.privatePollInterval / 1000)),
     protocol_version: () => String(PROTOCOL_VERSION),
     protocol_versions: () => SUPPORTED_PROTOCOL_VERSIONS.join(", "),
     replay,
-    snapshot_chunk: () => Config.snapshotChunkSize.toLocaleString("en-US"),
+    snapshot_chunk: () => GatewayConfig.snapshotChunkSize.toLocaleString("en-US"),
     snapshot_resources: () => STORED_RESOURCES.map(resource => `\`${resource}\``).join(", "),
     ws_url: () => Config.publicWSURL,
 };

@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 
 const VERSION = 2;
 const KEY = scryptSync(Config.encryptionKey, Config.encryptionSalt, 32);

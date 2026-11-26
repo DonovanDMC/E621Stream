@@ -1,7 +1,8 @@
 import Router, { Middleware } from "@yiffy/bun-router";
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import HTTPConfig from "../config/HTTPConfig.ts";
 import { startLogging } from "../util/FileLog.ts";
 import { checkServices } from "../util/util.ts";
 
@@ -41,7 +42,7 @@ await Router.load(new URL("./routes", import.meta.url));
 
 const server = Bun.serve({
     hostname: Config.host,
-    port: Config.httpPort,
+    port: HTTPConfig.port,
     routes: Router.toRoutes(),
     fetch() {
         return render(<NotFound />, 404);
@@ -60,4 +61,4 @@ const server = Bun.serve({
 });
 
 Debug("http", `Listening on http://${server.hostname}:${server.port}`);
-if (Config.e621OAuthEnabled) startOAuthRefresh();
+if (HTTPConfig.oauthEnabled) startOAuthRefresh();

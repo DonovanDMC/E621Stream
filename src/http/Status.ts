@@ -1,5 +1,6 @@
 import pkg from "../../package.json";
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import IngesterConfig from "../config/IngesterConfig.ts";
 import Backfill from "../db/models/Backfill.ts";
 import Redis, { type StreamEntry } from "../db/Redis.ts";
 import { latestEvent, streamKey } from "../gateway/events.ts";
@@ -205,7 +206,7 @@ async function build(): Promise<StatusData> {
         generated_at: new Date().toISOString(),
         tracking_since: since,
         version: Config.version,
-        ingester: { started_at: startedAt, version: ingesterVersion, idle: idle === "true", idle_poll_scale: Config.idlePollScale, slow_poll_scale: slow?.scale ?? null },
+        ingester: { started_at: startedAt, version: ingesterVersion, idle: idle === "true", idle_poll_scale: IngesterConfig.idlePollScale, slow_poll_scale: slow?.scale ?? null },
         gateway: { connections: clients },
         latency,
         requests: {

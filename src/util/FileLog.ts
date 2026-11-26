@@ -4,7 +4,7 @@ import { access } from "node:fs/promises";
 import { constants } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 
 import { recordRequest } from "./latency.ts";
 import { count } from "./metrics.ts";

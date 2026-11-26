@@ -1,4 +1,4 @@
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 
 import type { RESTPostAPIWebhookWithTokenJSONBody, RESTPostAPIWebhookWithTokenWaitResult } from "discord-api-types/v10";
 

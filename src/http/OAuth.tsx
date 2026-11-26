@@ -4,7 +4,8 @@ import Debug from "@yiffy/debug";
 import { type BunRequest } from "bun";
 import { OAuthCallbackError, UnexpectedResponseError } from "e621";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import HTTPConfig from "../config/HTTPConfig.ts";
 import OAuthLink from "../db/models/OAuthLink.ts";
 import User from "../db/models/User.ts";
 import Redis from "../db/Redis.ts";
@@ -76,7 +77,7 @@ export async function startAuthorization(req: Bun.BunRequest, ip: string, purpos
 }
 
 export async function callback(req: BunRequest, ip: string): Promise<Response> {
-    if (!Config.e621OAuthEnabled) return render(<GenericError title="Feature Disabled" message="This feature is disabled." />, 503);
+    if (!HTTPConfig.oauthEnabled) return render(<GenericError title="Feature Disabled" message="This feature is disabled." />, 503);
     const params = new URL(req.url).searchParams;
     const state = params.get("state") ?? "";
     const storedState = req.cookies.get(OAUTH_STATE_COOKIE);
@@ -138,7 +139,7 @@ export async function callback(req: BunRequest, ip: string): Promise<Response> {
     req.cookies.set(SESSION_COOKIE, sessionID, {
         httpOnly: true,
         secure: cookieSecure(req),
-        maxAge: Config.sessionLength * 3600,
+        maxAge: HTTPConfig.sessionLength * 3600,
     });
     return Response.redirect(returnTo, 303);
 }

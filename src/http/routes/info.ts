@@ -1,6 +1,7 @@
 import Router from "@yiffy/bun-router";
 
-import Config from "../../Config.ts";
+import Config from "../../config/Config.ts";
+import GatewayConfig from "../../config/GatewayConfig.ts";
 import DB from "../../db/DB.ts";
 import Redis from "../../db/Redis.ts";
 import { COMPRESSION_TYPES } from "../../gateway/compression.ts";
@@ -22,7 +23,7 @@ Router.new("/info", "GET")
             protocol_version: PROTOCOL_VERSION,
             protocol_versions: SUPPORTED_PROTOCOL_VERSIONS,
             websocket_url: Config.publicWSURL,
-            websocket_auth_required: Config.wsAuthRequired,
+            websocket_auth_required: GatewayConfig.authRequired,
             compression: COMPRESSION_TYPES,
             events: EVENT_TYPES,
             private_events: PRIVATE_EVENT_TYPES,

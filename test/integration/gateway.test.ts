@@ -12,7 +12,7 @@ let gateway: Bun.Subprocess | undefined;
 beforeAll(async () => {
     await reset();
     // recheck quickly, so a revoked token can be seen being disconnected
-    gateway = await startService("src/gateway/index.ts", `http://127.0.0.1:${PORT}`, { GATEWAY_PORT: String(PORT), SESSION_RECHECK_INTERVAL: "300" });
+    gateway = await startService("src/gateway/index.ts", `http://127.0.0.1:${PORT}`, { GATEWAY_PORT: String(PORT), GATEWAY_SESSION_RECHECK_INTERVAL: "300" });
 });
 
 afterAll(async () => stopService(gateway));

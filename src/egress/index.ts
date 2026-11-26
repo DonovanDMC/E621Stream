@@ -4,7 +4,8 @@ import { connect } from "node:net";
 
 import Debug from "@yiffy/debug";
 
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
+import EgressConfig from "../config/EgressConfig.ts";
 import { startLogging } from "../util/FileLog.ts";
 
 import type { Duplex } from "node:stream";
@@ -27,7 +28,7 @@ async function tunnel(target: string, socket: Duplex, head: Buffer): Promise<voi
 
     let address: string;
     try {
-        const result = await lookup(host, { family: Config.e621EgressFamily });
+        const result = await lookup(host, { family: EgressConfig.family });
         address = result.address;
     } catch (err) {
         Debug("egress", `couldn't resolve ${target}: ${String(err)}`);
@@ -64,4 +65,4 @@ createServer((req, res) => {
         socket.on("error", () => null); // ignore errors
         void tunnel(req.url ?? "", socket, head);
     })
-    .listen(Config.egressPort, () => { Debug("egress", `Tunneling over IPv${Config.e621EgressFamily} to ${allowedHosts.join(", ")} on :${Config.egressPort}`); });
+    .listen(EgressConfig.port, () => { Debug("egress", `Tunneling over IPv${EgressConfig.family} to ${allowedHosts.join(", ")} on :${EgressConfig.port}`); });

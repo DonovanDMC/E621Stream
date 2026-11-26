@@ -1,4 +1,4 @@
-import Config from "../Config.ts";
+import Config from "../config/Config.ts";
 import PostVersionIndex from "../db/models/PostVersionIndex.ts";
 import Redis from "../db/Redis.ts";
 import { getArtistURLSnapshots, getBanSnapshotByUser, getHelpPageSnapshotByName, getSnapshot, saveSnapshot, getTagSnapshotByName, removeSnapshot, updateSnapshot, type SnapshotResourceType, type SnapshotTypeMap } from "../gateway/snapshots.ts";

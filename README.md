@@ -52,6 +52,9 @@ Put `http` and `gateway` behind a reverse proxy, with `TRUST_PROXY=true` so clie
 ### This sends out everything the ingester's account can see. Use a normal account, not one with staff permissions.
 `ip_addr`, `email` and the like are removed anyways, but don't rely on that.
 
+### Configuration
+Everything is set through the environment, see [`.env.example`](./.env.example). Settings only one service uses start with its name (`HTTP_`, `GATEWAY_`, `INGESTER_`, `EGRESS_`), and are read from `src/config` by `HTTPConfig`, `GatewayConfig`, `IngesterConfig` and `EgressConfig`. The rest are shared, in `Config`. Setting one of the names from before they were split stops every service with what it's called now.
+
 ### Development
 `docker compose watch` (or `docker compose up --watch`) copies changes in `src` into the containers and restarts them, and rebuilds when the dependencies change.
 
@@ -82,15 +85,15 @@ Posts are polled with `order:updated`, which also changes for votes, favorites &
 The [status page](https://e621.stream/status) shows each feed's health, and admins can pause, slow down or recover individual feeds from the admin page.
 
 ### Rate Limits
-e621's limit is 2 requests a second. Requests start `E621_REQUEST_INTERVAL` (550ms) apart, with at most two going at once. Every process shares the same limit through redis, including credential checks (`E621_AUTH_REQUEST_INTERVAL`, 1000ms) and private events (`E621_PRIVATE_REQUEST_INTERVAL`, 1000ms, each user every `E621_PRIVATE_POLL_INTERVAL`). Requests that take over 10 seconds are given up on and retried.
+e621's limit is 2 requests a second. Requests start `E621_REQUEST_INTERVAL` (550ms) apart, with at most two going at once. Every process shares the same limit through redis, including credential checks (`E621_AUTH_REQUEST_INTERVAL`, 1000ms) and private events (`GATEWAY_PRIVATE_REQUEST_INTERVAL`, 1000ms, each user every `GATEWAY_PRIVATE_POLL_INTERVAL`). Requests that take over 10 seconds are given up on and retried.
 
-While nobody's connected and there's still backfill left, feeds are polled `IDLE_POLL_SCALE` (10) times slower so the backfill can have the requests. When e621 is responding slowly, slow mode on the admin page polls every feed slower without a redeploy. If `DISCORD_NOTIFICATION_WEBHOOK_URL` is set, it's posted to when the median request time over 5 minutes reaches `LATENCY_ALERT_MS` (2000ms), and again once it's recovered.
+While nobody's connected and there's still backfill left, feeds are polled `INGESTER_IDLE_POLL_SCALE` (10) times slower so the backfill can have the requests. When e621 is responding slowly, slow mode on the admin page polls every feed slower without a redeploy. If `DISCORD_NOTIFICATION_WEBHOOK_URL` is set, it's posted to when the median request time over 5 minutes reaches `INGESTER_LATENCY_ALERT_MS` (2000ms), and again once it's recovered.
 
 ### Egress
-e621 seems to handle requests from each ip one at a time, so a slow request holds up the next one. If the server has spare addresses, the egress service is a proxy that can only connect to e621 (over `E621_EGRESS_FAMILY`), and `E621_EGRESS_PROXIES` lists them. Requests go through whichever route has the least going on, a proxy that fails to connect is skipped for 30 seconds. This doesn't change the rate, just how long requests spend waiting.
+e621 seems to handle requests from each ip one at a time, so a slow request holds up the next one. If the server has spare addresses, the egress service is a proxy that can only connect to e621 (over `EGRESS_FAMILY`), and `E621_EGRESS_PROXIES` lists them. Requests go through whichever route has the least going on, a proxy that fails to connect is skipped for 30 seconds. This doesn't change the rate, just how long requests spend waiting.
 
 ### Backfill
-Updates need the previous copy of something to say what changed, so with `BACKFILL=true` the ingester stores everything from before its feeds started, through the api, newest first, using only the requests polling doesn't need. Posts alone are around 17,000 requests, so the first run takes a while, the status page and `e621stream backfill status` show how far it's got.
+Updates need the previous copy of something to say what changed, so with `INGESTER_BACKFILL=true` the ingester stores everything from before its feeds started, through the api, newest first, using only the requests polling doesn't need. Posts alone are around 17,000 requests, so the first run takes a while, the status page and `e621stream backfill status` show how far it's got.
 
 ### Recoveries
 If the ingester misses something (e621 being down for a while, or a bug), an admin can go back over that window from the admin page. What wasn't sent the first time is sent with `"recovered": true`, and clients are told when one starts and ends.
